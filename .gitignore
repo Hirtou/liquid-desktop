@@ -1,0 +1,10 @@
+# Personal data — never commit / Личное — не выкладывать
+config.json
+lyrics_cache.json
+*.tmp
+
+# Logs and caches / Журналы и служебное
+*.log
+__pycache__/
+*.pyc
+promo/

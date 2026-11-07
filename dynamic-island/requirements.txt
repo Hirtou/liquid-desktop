@@ -1,0 +1,10 @@
+PySide6
+numpy
+pycaw
+comtypes
+winrt-runtime
+winrt-Windows.Media
+winrt-Windows.Media.Control
+winrt-Windows.Foundation
+winrt-Windows.Foundation.Collections
+winrt-Windows.Storage.Streams
