@@ -35,13 +35,21 @@ Liquid Desktop is two small open-source apps written in Python + PySide6:
   something is going on: music, a timer, a pomodoro, volume changes, "copied", Caps Lock, audio device switch.
   Hover it to expand into a card with controls.
 
-### What you need
+### Quick start — no Python needed
+
+1. Open [**Releases**](https://github.com/Hirtou/liquid-desktop/releases/latest) and download **`LiquidDesktop-portable-win64.zip`** (~100 MB).
+   Python 3.12 and all libraries are already inside.
+2. Unpack it anywhere (for example, to the Desktop).
+3. Double-click **`Start widgets.bat`** — the catalog opens. **`Start Dynamic Island.bat`** starts the island.
+
+Nothing is installed into Windows: to remove it, quit both apps in the tray and delete the folder.
+If Windows SmartScreen asks, click **More info → Run anyway** (the files are not signed).
+
+### Run from source (with your own Python)
 
 - Windows 10 or 11
 - [Python 3.12](https://www.python.org/downloads/) — during installation tick **"Add python.exe to PATH"**
 - Internet on the first run (to install the libraries; weather, ping and currency also need it)
-
-### How to install and run
 
 1. On this page click **Code → Download ZIP** and unpack it anywhere (for example, to the Desktop).
 2. **Widgets:** open the `desktop-widgets` folder and double-click **`run.bat`**.
@@ -81,6 +89,11 @@ Your settings are saved to `config.json` inside each folder. They are personal a
 - Widgets and the island hide themselves from screen capture to see what's under the glass; for screenshots
   they show up automatically on PrtSc / Win+Shift+S.
 
+### Building the portable zip
+
+`powershell -ExecutionPolicy Bypass -File tools\make_portable.ps1` (needs Python 3.12 for pip) →
+`build\LiquidDesktop-portable-win64.zip`.
+
 ### License
 
 [MIT](LICENSE) — free to use, change and share. Contributions and bug reports are welcome.
@@ -99,13 +112,21 @@ Liquid Desktop — две небольшие программы с открыт�
   когда что-то происходит: музыка, таймер, помидор, громкость, «скопировано», Caps Lock, смена устройства звука.
   Наведи мышь — раскроется карточкой с кнопками.
 
-### Что нужно
+### Быстрый старт — Python не нужен
+
+1. Открой [**Releases**](https://github.com/Hirtou/liquid-desktop/releases/latest) и скачай **`LiquidDesktop-portable-win64.zip`** (~100 МБ).
+   Python 3.12 и все библиотеки уже внутри.
+2. Распакуй куда удобно (например, на рабочий стол).
+3. Дважды щёлкни **`Start widgets.bat`** — откроется каталог. **`Start Dynamic Island.bat`** запускает остров.
+
+В Windows ничего не устанавливается: чтобы удалить, выйди из обеих программ в трее и удали папку.
+Если SmartScreen спросит — **Подробнее → Выполнить в любом случае** (файлы без цифровой подписи).
+
+### Запуск из исходников (со своим Python)
 
 - Windows 10 или 11
 - [Python 3.12](https://www.python.org/downloads/) — при установке поставь галочку **«Add python.exe to PATH»**
 - Интернет при первом запуске (поставить библиотеки; погоде, пингу и курсам он нужен и дальше)
-
-### Как установить и запустить
 
 1. Вверху этой страницы нажми **Code → Download ZIP** и распакуй куда удобно (например, на рабочий стол).
 2. **Виджеты:** открой папку `desktop-widgets` и дважды щёлкни **`run.bat`**.

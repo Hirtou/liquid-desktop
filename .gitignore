@@ -8,3 +8,6 @@ lyrics_cache.json
 __pycache__/
 *.pyc
 promo/
+
+# Portable build output / Сборка портативной версии
+build/
