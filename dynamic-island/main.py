@@ -24,6 +24,7 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 SERVER = "DynamicIsland-Fluid"
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 RUN_NAME = "DynamicIsland"
+STOPPED = os.path.join(ROOT, "stopped")  # остров закрыли через «Выход» — виджеты его не поднимают
 
 
 def setup_log():
@@ -80,7 +81,6 @@ def set_autostart(on):
 
 
 def main():
-    setup_log()
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationDisplayName(tr("Динамический остров"))
@@ -102,6 +102,7 @@ def main():
             sock.waitForBytesWritten(300)
         return
 
+    setup_log()  # после проверки: команды вроде --cmd snap — не запуск острова, в лог их не пишем
     sys.path.insert(0, ROOT)
     from bridge import settings
     from island import Island
@@ -116,12 +117,29 @@ def main():
     server = QLocalServer(app)
 
     def on_command():
-        s = server.nextPendingConnection()
-        s.waitForReadyRead(300)
-        if bytes(s.readAll()).decode(errors="ignore").strip() == "snap":  # показаться снимку экрана на 3 с
-            island.on_screenshot()
+        """Читаем по готовности, а не ждём в главном потоке: виджеты раз в 30 с проверяют, жив ли остров,
+        и отключаются, ничего не прислав."""
+        while server.hasPendingConnections():
+            s = server.nextPendingConnection()
+            parts = []
+
+            def finish(s=s, parts=parts):
+                parts.append(bytes(s.readAll()))
+                if b"".join(parts).decode(errors="ignore").strip() == "snap":  # показаться снимку экрана на 3 с
+                    island.on_screenshot()
+                parts.clear()
+                s.deleteLater()  # иначе у каждого подключения остаются дескрипторы Windows и память
+
+            s.readyRead.connect(lambda s=s, parts=parts: parts.append(bytes(s.readAll())))
+            s.disconnected.connect(finish)
+            if s.state() != QLocalSocket.ConnectedState:
+                finish()
     server.newConnection.connect(on_command)
     server.listen(SERVER)
+    try:
+        os.remove(STOPPED)
+    except OSError:
+        pass
     if autostart_enabled():
         set_autostart(True)  # обновить путь, если папку переносили
 
@@ -139,7 +157,13 @@ def main():
     auto.toggled.connect(set_autostart)
     menu.addAction(auto)
     menu.addSeparator()
-    menu.addAction(tr("Выход"), app.quit)
+    def quit_by_user():
+        try:  # закрыли сами — виджеты не поднимают остров снова, пока его не запустят вручную
+            open(STOPPED, "w").close()
+        except OSError:
+            pass
+        app.quit()
+    menu.addAction(tr("Выход"), quit_by_user)
     menu.aboutToShow.connect(lambda: on.setChecked(settings.get("enabled", True)))  # могли выключить правым кликом
     tray.setContextMenu(menu)
     tray.show()

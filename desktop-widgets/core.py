@@ -75,17 +75,29 @@ QLabel#bubble {{ background: {bubble}; border: 1px solid {cardline}; border-radi
 class Config:
     def __init__(self):
         try:
-            with open(CONFIG_PATH, encoding="utf-8") as f:
+            with open(CONFIG_PATH, encoding="utf-8-sig") as f:  # -sig: Блокнот мог дописать BOM
                 self.data = json.load(f)
-        except (OSError, ValueError):
+            if not isinstance(self.data, dict):
+                raise ValueError("не словарь")
+        except FileNotFoundError:
             self.data = {}
+        except (OSError, ValueError):
+            # файл испорчен (обрыв записи, правили руками) — не затирать молча: отложить копию, начать с чистого
+            self.data = {}
+            try:
+                os.replace(CONFIG_PATH, CONFIG_PATH[:-5] + time.strftime(".broken-%Y%m%d-%H%M%S.json"))
+            except OSError:
+                pass
 
     def section(self, name):
         return self.data.setdefault(name, {})
 
     def save(self):
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        # сначала во временный файл, потом подмена целиком: выключат свет посреди записи — старый файл цел
+        tmp = CONFIG_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(self.data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, CONFIG_PATH)
 
 
 config = Config()
@@ -124,6 +136,7 @@ class Activity:
         # сколько кадров в работе на каждом мониторе: новый не снимаем, пока старый не готов
         self.inflight = {}
         self.cover = None  # окно впереди (физ. пиксели), если пользователь в окне
+        self.fs_monitor = None  # монитор игры на весь экран
 
     def start(self):
         if self.timer is None:
@@ -166,7 +179,7 @@ class Activity:
     def tick(self):
         self.ticks += 1
         now = time.monotonic()
-        if now - self.last_check >= 0.25:  # 4 раза в секунду — чем занят пользователь (при любом такте)
+        if now - self.last_check >= 0.19:  # 4–5 раз в секунду — чем занят пользователь (при любом такте)
             self.last_check = now
             self.check()
         if now < self.snap_until:
@@ -180,8 +193,8 @@ class Activity:
                     w.due, w.same = 0.0, 0
             self.cursor, self.moved = pos, now
         idle = now - self.moved > 1.0
-        # сам такт: 30 раз в секунду, пока двигается мышь; в покое хватает 10; в игре на весь экран — 4
-        rate = 250 if self.mode == "fullscreen" else 100 if idle else 33
+        # сам такт: 30 раз в секунду, пока двигается мышь; в покое хватает 5; в игре на весь экран — 4
+        rate = 250 if self.mode == "fullscreen" else 200 if idle else 33
         if self.timer.interval() != rate:
             self.timer.setInterval(rate)
         groups = {}
@@ -208,8 +221,10 @@ class Activity:
             near = 250 * w.devicePixelRatioF()
             calm = idle or not (win[0] - near <= cur.x < win[2] + near and win[1] - near <= cur.y < win[3] + near)
             if calm and self.mode in ("desktop", "window") and not w.on_top():
-                # под ним только рабочий стол, а он без мыши не меняется; снимки одинаковые — ещё реже (до 2 с)
-                interval = 500 * (1 + min(3, w.same // 2))
+                # под ним только рабочий стол, а он без мыши не меняется; снимки одинаковые — ещё реже (до 4 с:
+                # мышь ожила или сменилось окно впереди — снимок сразу, due сбрасывается)
+                # мышь совсем стоит — раз в секунду и при живых обоях: стекло размыто, разницы с двумя кадрами не видно
+                interval = max(1000 if idle else 500, 500 * (1 + min(7, w.same // 2)))
             w.due = now + interval / 1000
             args, (win, monitor, *rest) = w._job()
             groups.setdefault(monitor, []).append((w, args, glass.capture_rect(win, *rest)))
@@ -247,6 +262,8 @@ class Activity:
             refresh = True
             for w in self.widgets():
                 w.set_rate()
+        if mode == "fullscreen":  # на каком мониторе игра (её могли перетащить — смотрим каждый раз, это дёшево)
+            self.fs_monitor = glass.window_rect(glass.user32.GetForegroundWindow())[1]
         # окно впереди: виджеты, которые оно закрывает целиком, анимацию не рисуют (см. covered)
         cover = glass.cover_rect(glass.user32.GetForegroundWindow()) if self.mode == "window" else None
         if cover != self.cover or refresh:
@@ -262,10 +279,16 @@ class Activity:
         if w.on_top() or not w.isVisible():
             return not w.isVisible()
         if self.mode == "fullscreen":
-            return True
+            # игра закрывает только свой монитор: на втором виджеты видны (температура и пинг во время игры)
+            return self.fs_monitor is None or glass.window_rect(int(w.winId()))[1] == self.fs_monitor
         if self.cover is None:
             return False
         return glass.hides(self.cover, glass.window_rect(int(w.winId()))[0], SHADOW * w.devicePixelRatioF())
+
+    def paused(self, w):
+        """Опрашивать данные незачем: окно видно системе, но его закрыли игрой или окном (откроют — следующий такт
+        покажет свежее). Скрытые окна опрос не останавливают: это превью каталога и виджет под ярлыками."""
+        return w.isVisible() and self.covered(w)
 
 
 activity = Activity()
@@ -391,6 +414,16 @@ class DesktopWidget(QWidget):
         self.setWindowFlags(flags)
         if visible:
             self.show()
+        self.sync_topmost()
+
+    def sync_topmost(self):
+        """Поверх всех окон — сами: Qt при смене флага у окна-инструмента «поверх» в Windows не ставит
+        (флаг Qt есть, WS_EX_TOPMOST нет — «Двигать виджеты» не поднимал их над окнами)."""
+        if not self.isVisible() or self.pinned:
+            return
+        # -1 — поверх всех, -2 — снять «поверх всех»; дальше nativeEvent сам опустит виджет к рабочему столу
+        glass.user32.SetWindowPos(int(self.winId()), wt.HWND(-1 if self.on_top() else -2), 0, 0, 0, 0,
+                                  0x0001 | 0x0002 | 0x0010)  # без сдвига, размера и активации
 
     # ---------- под ярлыками ----------
 
@@ -519,6 +552,7 @@ class DesktopWidget(QWidget):
         super().showEvent(event)
         activity._widgets = None  # список виджетов — собрать заново
         self.setup_capture()
+        self.sync_topmost()
         self.setWindowOpacity(0)
         self.fade = QPropertyAnimation(self, b"windowOpacity", self, duration=260, startValue=0.0, endValue=1.0)
         self.fade.start()
@@ -913,8 +947,14 @@ class DesktopWidget(QWidget):
             a = themes.addAction(text, lambda n=name: self.set_theme(n))
             a.setCheckable(True)
             a.setChecked(self.cfg.get("theme", "auto") == name)
-        menu.addAction(tr("Скрыть"), self.close)
+        menu.addAction(tr("Скрыть"), self.hide_by_user)
         menu.exec(event.globalPos())
+
+    def hide_by_user(self):
+        """«Скрыть» из меню — решение пользователя, запоминаем. Простое закрытие окна (выключение Windows) — нет."""
+        self.cfg["visible"] = False
+        config.save()
+        self.close()
 
     def add_actions(self, menu):
         """Свои пункты меню виджета (переопределяется)."""

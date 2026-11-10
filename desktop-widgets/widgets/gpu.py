@@ -11,7 +11,7 @@ import threading
 from PySide6.QtCore import QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPen
 
-from core import DesktopWidget, grid, open_uri
+from core import DesktopWidget, activity, grid, open_uri
 
 GREEN, AMBER, RED, NVIDIA = QColor("#4ade80"), QColor("#ffb547"), QColor("#ff5a5f"), QColor("#76b900")
 FIELDS = "name,utilization.gpu,temperature.gpu,memory.used,memory.total,power.draw,fan.speed"
@@ -240,7 +240,7 @@ class GpuWidget(DesktopWidget):
         self.refresh()
 
     def refresh(self):
-        if not self.fetching:
+        if not self.fetching and not activity.paused(self):  # в игре не дёргаем драйвер: виджета всё равно не видно
             self.fetching = True
             threading.Thread(target=self._fetch, daemon=True).start()
 
@@ -253,8 +253,9 @@ class GpuWidget(DesktopWidget):
 
     def on_data(self, data):
         self.fetching = False
-        self.data = data
-        self.update()
+        if data != self.data:
+            self.data = data
+            self.update()
 
     def double_click(self):
         open_uri("taskmgr.exe")

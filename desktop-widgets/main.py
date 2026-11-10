@@ -630,6 +630,9 @@ class Catalog(DesktopWidget):
 
     def closeEvent(self, event):
         # окно прячется в трей, виджеты остаются; выйти совсем — «Выйти из программы»
+        if self.quitting:  # отказ здесь отменил бы выход: процесс остался бы висеть без части виджетов
+            super().closeEvent(event)
+            return
         event.ignore()
         if activity.editing:
             self.set_editing(False)  # закрыли окно — виджеты обратно под ярлыки
@@ -705,6 +708,10 @@ class Catalog(DesktopWidget):
     def toggle(self, cls):
         w = self.instances.get(cls.key)
         if w:
+            # «выключен» запоминаем только здесь, по клику: при выключении Windows окна закрывает система —
+            # если писать это при закрытии окна, утром не откроется ни один виджет
+            config.section(cls.key)["visible"] = False
+            config.save()
             w.close()
             return
         w = cls(on_closed=self.closed)
@@ -721,12 +728,14 @@ class Catalog(DesktopWidget):
     def closed(self, w):
         if self.quitting:
             return
+        if config.section(w.key).get("visible"):  # не сам пользователь (он сперва снимает visible)
+            # кто закрыл виджет — в widgets.log: ловим случай, когда виджеты выключаются сами
+            print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} закрыт виджет {w.key}; стек:", file=sys.stderr)
+            traceback.print_stack(limit=6, file=sys.stderr)
         self.instances.pop(w.key, None)
         # удалить окно сейчас и здесь, в главном потоке; иначе последняя ссылка может остаться
         # у фонового потока (снимок экрана, погода), и окно удалится оттуда — это вылет
         w.deleteLater()
-        config.section(w.key)["visible"] = False
-        config.save()
         card = self.cards[w.key]
         if card.switch.isChecked():
             card.switch.toggle()
@@ -791,6 +800,56 @@ def set_autostart(on):
                 pass
 
 
+ISLAND_SERVER = "DynamicIsland-Fluid"
+
+
+def island_launch():
+    """Как запускать динамический остров — из его же записи автозапуска: (pythonw, main.py) или None.
+    Записи нет — автозапуск острова выключен; есть файл «stopped» рядом — остров закрыли через «Выход»."""
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
+            cmd = winreg.QueryValueEx(k, "DynamicIsland")[0]
+    except OSError:
+        return None
+    parts = [p.strip('"') for p in cmd.split('" "')]
+    if len(parts) < 2 or not os.path.isfile(parts[0]) or not os.path.isfile(parts[1]):
+        return None
+    if os.path.exists(os.path.join(os.path.dirname(parts[1]), "stopped")):
+        return None
+    return parts[0], parts[1]
+
+
+def island_alive():
+    probe = QLocalSocket()
+    probe.connectToServer(ISLAND_SERVER)
+    alive = probe.waitForConnected(200)
+    probe.abort()
+    return alive
+
+
+def watch_island(app):
+    """Windows иногда пропускает остров при входе (в журнале Shell-Core его запуска нет вовсе, а виджеты — есть),
+    и после падения он тоже не вернётся сам. Виджеты стартуют надёжно — они и поднимают остров. Два промаха подряд
+    (минута), чтобы не влезть в перезапуск острова при смене языка."""
+    misses = [0]
+
+    def check():
+        launch = island_launch()
+        if launch is None or island_alive():
+            misses[0] = 0
+            return
+        misses[0] += 1
+        if misses[0] >= 2:
+            misses[0] = 0
+            ok = QProcess.startDetached(launch[0], [launch[1]], os.path.dirname(launch[1]))
+            print(time.strftime("%Y-%m-%d %H:%M:%S"), "остров не запущен — запускаю:", "да" if ok else "не вышло",
+                  file=sys.stderr, flush=True)
+    timer = QTimer(app, interval=30_000, timeout=check)
+    timer.start()
+    QTimer.singleShot(15_000, check)
+    return timer
+
+
 def apply_cfg(text):
     """Команда динамического острова (папка «остров» рядом с виджетами): поменять раздел настроек и перерисовать его виджет."""
     try:
@@ -836,11 +895,27 @@ def main():
     # вторая копия программы просит открыть каталог
     QLocalServer.removeServer(SERVER)
     server = QLocalServer(app)
-    def on_command():
-        sock = server.nextPendingConnection()
-        sock.waitForReadyRead(300)
-        # пусто — только проверили, что мы запущены (остров), окно не открываем; вторая копия шлёт «show» явно
-        cmd = bytes(sock.readAll()).decode(errors="ignore").strip()
+    def on_connection():
+        """Подключения идут постоянно (остров проверяет нас раз в 3 с): сокет обязательно удалить, иначе у каждого
+        остаётся 3 дескриптора Windows и память; и ждать данные нельзя в главном потоке — читаем по готовности."""
+        while server.hasPendingConnections():
+            sock = server.nextPendingConnection()
+            parts = []
+
+            def finish(sock=sock, parts=parts):
+                parts.append(bytes(sock.readAll()))
+                on_command(b"".join(parts))
+                parts.clear()  # disconnected приходит и после abort/ошибки: команду выполнить один раз
+                sock.deleteLater()
+
+            sock.readyRead.connect(lambda sock=sock, parts=parts: parts.append(bytes(sock.readAll())))
+            sock.disconnected.connect(finish)
+            if sock.state() != QLocalSocket.ConnectedState:  # клиент успел отключиться раньше, чем мы подписались
+                finish()
+
+    def on_command(data):
+        # пусто — только проверили, что мы запущены, окно не открываем; вторая копия шлёт «show» явно
+        cmd = data.decode(errors="ignore").strip()
         if not cmd:
             return
         if cmd == "snap":
@@ -854,8 +929,9 @@ def main():
         else:
             catalog.open()
 
-    server.newConnection.connect(on_command)
+    server.newConnection.connect(on_connection)
     server.listen(SERVER)
+    watch_island(app)
     if "--cmd" in sys.argv and sys.argv[sys.argv.index("--cmd") + 1] == "edit":
         QTimer.singleShot(1500, lambda: catalog.set_editing(True))  # перезапуск в режиме «Двигать»
 

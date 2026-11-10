@@ -9,7 +9,7 @@ from collections import deque
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QLinearGradient, QPainter, QPainterPath, QPen
 
-from core import DesktopWidget, grid, open_uri
+from core import DesktopWidget, activity, grid, open_uri
 
 HOSTS = [("Google", "google.com", 443), ("Cloudflare", "1.1.1.1", 443), ("Steam", "steamcommunity.com", 443)]
 SAMPLES = 30  # по 2 с — минута
@@ -54,7 +54,7 @@ class PingWidget(DesktopWidget):
         self.refresh()
 
     def refresh(self):
-        if not self.busy:
+        if not self.busy and not activity.paused(self):  # в игре и под окном не шлём соединения: цифр всё равно не видно
             self.busy = True
             threading.Thread(target=self._measure, daemon=True).start()
 
@@ -136,7 +136,7 @@ class PingWidget(DesktopWidget):
             v = self.last[i]
             x = r.left() + i * col_w
             p.setFont(num)
-            p.setPen(quality(v)[1] if v is not None else dim)
+            p.setPen((quality(v)[1] if dark else quality(v)[1].darker(150)) if v is not None else dim)  # на светлом — темнее, иначе жёлтое не видно
             p.drawText(QRectF(x, r.top() + 28, col_w, 24), Qt.AlignLeft | Qt.AlignVCenter,
                        tr("{:.0f} мс").format(v) if v is not None else "—")
             p.setFont(small)

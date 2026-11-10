@@ -1,9 +1,11 @@
 from lang import tr
+import time
+
 import psutil
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QGridLayout, QLabel, QProgressBar, QVBoxLayout
 
-from core import DesktopWidget, open_uri
+from core import DesktopWidget, activity, open_uri
 
 BAR_STYLE = "QProgressBar::chunk { background: %s; border-radius: 3px; }"
 
@@ -31,7 +33,9 @@ class SystemWidget(DesktopWidget):
         self.disks = [p.mountpoint for p in psutil.disk_partitions(all=False)
                       if p.fstype and "cdrom" not in p.opts]
         self.rows = {}
-        names = [tr("ЦП"), tr("Память")] + [d.rstrip("\\") for d in self.disks]
+        self.colors = {}
+        self.disks_read = 0.0
+        names =[tr("ЦП"), tr("Память")] + [d.rstrip("\\") for d in self.disks]
         for i, name in enumerate(names):
             label = QLabel(name)
             bar = QProgressBar(textVisible=False, maximum=100)
@@ -57,14 +61,22 @@ class SystemWidget(DesktopWidget):
         bar, value = self.rows[name]
         bar.setValue(int(percent))
         color = "#ff6b6b" if percent > 85 else "#ffc861" if percent > 65 else "#5ad1a0"
-        bar.setStyleSheet(BAR_STYLE % color)
+        if self.colors.get(name) != color:  # таблица стилей дорогая: разбор и пересчёт вида строки — только при смене цвета
+            self.colors[name] = color
+            bar.setStyleSheet(BAR_STYLE % color)
         value.setText(text)
 
     def update_stats(self):
+        if activity.paused(self):
+            return
         cpu = psutil.cpu_percent()
         self.set_row(tr("ЦП"), cpu, f"{cpu:.0f}%")
         mem = psutil.virtual_memory()
         self.set_row(tr("Память"), mem.percent, f"{mem.used / 1024 ** 3:.1f}/{gb(mem.total)}")
+        now = time.monotonic()
+        if now - self.disks_read < 30:  # место на дисках меняется медленно, а спрашивать его у Windows — обращение к диску
+            return
+        self.disks_read = now
         for d in self.disks:
             try:
                 u = psutil.disk_usage(d)

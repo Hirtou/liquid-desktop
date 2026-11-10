@@ -3,20 +3,21 @@
 from lang import LANG, tr
 import json
 import math
+import os
 import ssl
 import time
 import threading
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (QGridLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMessageBox, QVBoxLayout,
                                QWidget)
 
 import icons
-from core import DesktopWidget, activity, config, open_uri
+from core import ROOT, DesktopWidget, activity, config, open_uri
 
 # код погоды WMO -> описание (значки рисуются сами — icons.weather_kind)
 CODES = {
@@ -111,8 +112,10 @@ def now_values(data):
     model = {"temp": cur["temperature_2m"], "code": cur["weather_code"], "text": CODES.get(cur["weather_code"], ""),
              "wind": cur["wind_speed_10m"], "humidity": cur["relative_humidity_2m"], "visibility": None,
              "is_day": cur.get("is_day", 1), "source": data.get("note", "") + tr("модель Open-Meteo")}
-    if "yandex" in data:
-        return {**model, "text": data["yandex"]["text"], "source": tr("Яндекс Погода")}
+    fixed = data.get("fixed")
+    if fixed:  # другой сайт (Яндекс, yr.no, OpenWeatherMap): «сейчас» — как он сказал, без станции
+        return {**model, "text": fixed.get("text") or model["text"], "visibility": fixed.get("visibility"),
+                "source": fixed["source"]}
     if not st:
         return model
     if st["km"] <= 5:
@@ -137,26 +140,222 @@ YANDEX = {
 }
 
 
+YA_WIND = {"n": 0, "ne": 45, "e": 90, "se": 135, "s": 180, "sw": 225, "w": 270, "nw": 315}  # откуда дует -> градусы
+
+
 def fetch_yandex(lat, lon, key):
-    """Яндекс Погода по твоему ключу (API v2). -> данные в нашем виде или исключение."""
+    """Яндекс Погода по твоему ключу (API v2): сейчас, по часам и на 4 дня. -> данные в нашем виде или исключение."""
     url = "https://api.weather.yandex.ru/v2/forecast?" + urllib.parse.urlencode(
-        {"lat": lat, "lon": lon, "lang": "en_US" if LANG == "en" else "ru_RU", "limit": 4, "hours": "false"})
+        {"lat": lat, "lon": lon, "lang": "en_US" if LANG == "en" else "ru_RU", "limit": 4, "hours": "true"})
     req = urllib.request.Request(url, headers={"X-Yandex-Weather-Key": key, "X-Yandex-API-Key": key})
     with urllib.request.urlopen(req, timeout=10) as r:
         y = json.load(r)
     fact = y["fact"]
     code, text = YANDEX.get(fact.get("condition"), (3, fact.get("condition", "")))
     days = y.get("forecasts", [])
-    daily = {"time": [], "weather_code": [], "temperature_2m_max": [], "temperature_2m_min": []}
+    daily = {"time": [], "weather_code": [], "temperature_2m_max": [], "temperature_2m_min": [],
+             "precipitation_probability_max": [], "sunrise": [], "sunset": []}
+    hourly = {"time": [], "temperature_2m": [], "weather_code": [], "precipitation_probability": [], "is_day": []}
     for f in days:
         part = f["parts"]["day"]
         daily["time"].append(f["date"])
         daily["weather_code"].append(YANDEX.get(part.get("condition"), (3, ""))[0])
         daily["temperature_2m_max"].append(part.get("temp_max", part.get("temp_avg", 0)))
         daily["temperature_2m_min"].append(f["parts"].get("night", part).get("temp_min", part.get("temp_min", 0)))
-    return {"current": {"temperature_2m": fact["temp"], "weather_code": code, "wind_speed_10m": fact.get("wind_speed", 0),
-                        "relative_humidity_2m": fact.get("humidity"), "is_day": int(fact.get("daytime", "d") == "d")},
-            "daily": daily, "yandex": {"text": text, "feels": fact.get("feels_like")}}
+        daily["precipitation_probability_max"].append(part.get("prec_prob"))
+        # восход и закат приходят как «06:35» — в виде Open-Meteo «дата T время»
+        daily["sunrise"].append(f"{f['date']}T{f['sunrise']}" if f.get("sunrise") else "")
+        daily["sunset"].append(f"{f['date']}T{f['sunset']}" if f.get("sunset") else "")
+        rise, fall = f.get("sunrise", "06:00"), f.get("sunset", "18:00")
+        for h in f.get("hours") or []:  # часы — уже по времени места
+            hour = int(h["hour"])
+            hourly["time"].append(f"{f['date']}T{hour:02d}:00")
+            hourly["temperature_2m"].append(h.get("temp", 0))
+            hourly["weather_code"].append(YANDEX.get(h.get("condition"), (3, ""))[0])
+            hourly["precipitation_probability"].append(h.get("prec_prob"))
+            hourly["is_day"].append(int(rise <= f"{hour:02d}:30" <= fall))
+    if all(v is None for v in daily["precipitation_probability_max"]):
+        del daily["precipitation_probability_max"]
+    current = {"temperature_2m": fact["temp"], "weather_code": code, "wind_speed_10m": fact.get("wind_speed", 0),
+               "relative_humidity_2m": fact.get("humidity"), "is_day": int(fact.get("daytime", "d") == "d"),
+               "pressure_msl": fact["pressure_mm"] / 0.750062 if fact.get("pressure_mm") else fact.get("pressure_pa"),
+               "wind_direction_10m": YA_WIND.get(fact.get("wind_dir")), "wind_gusts_10m": fact.get("wind_gust")}
+    return {"current": current, "hourly": hourly if hourly["time"] else None, "daily": daily,
+            "fixed": {"text": text, "feels": fact.get("feels_like"), "source": tr("Яндекс Погода")}}
+
+
+# ---------- другие сайты: всё приводим к виду Open-Meteo (current / hourly / daily), коды погоды — WMO ----------
+
+SOURCES = {"auto": tr("Open-Meteo + метеостанция"), "model": tr("Open-Meteo, только модель"),
+           "metno": "MET Norway (yr.no)", "yandex": tr("Яндекс Погода"), "owm": "OpenWeatherMap"}
+KEYS = {"yandex": "yandex_key", "owm": "owm_key"}  # каким сайтам нужен свой ключ и где он в настройках
+# MET Norway требует, чтобы программа называла себя (без этого отвечает 403); личных данных тут нет
+METNO_AGENT = "LiquidDesktopWidgets/1.0 github.com/Hirtou/liquid-desktop"
+
+
+def current_source(cfg):
+    """Откуда брать погоду. Без выбора — как раньше: Яндекс, если вписан ключ, иначе Open-Meteo со станцией.
+    Выбран сайт с ключом, а ключа нет — тоже Open-Meteo."""
+    source = cfg.get("source") or ("yandex" if valid_key(cfg.get("yandex_key")) else "auto")
+    if source not in SOURCES or (source in KEYS and not valid_key(cfg.get(KEYS[source]))):
+        return "auto"
+    return source
+
+
+def _pick_daily(days, count=4):
+    """{дата: {"t": [...], "codes": [(час, код)], "pop": [...], "uv": [...]}} -> daily в виде Open-Meteo."""
+    out = {"time": [], "weather_code": [], "temperature_2m_max": [], "temperature_2m_min": [],
+           "precipitation_probability_max": [], "uv_index_max": []}
+    for day in sorted(days)[:count]:
+        d = days[day]
+        out["time"].append(day)
+        # погода дня — та, что около 14 часов (как пишут сайты), а не ночная
+        out["weather_code"].append(min(d["codes"], key=lambda hc: abs(hc[0] - 14))[1] if d["codes"] else 3)
+        out["temperature_2m_max"].append(max(d["t"]))
+        out["temperature_2m_min"].append(min(d["t"]))
+        out["precipitation_probability_max"].append(max(d["pop"]) if d["pop"] else None)
+        out["uv_index_max"].append(max(d["uv"]) if d["uv"] else None)
+    if all(v is None for v in out["precipitation_probability_max"]):
+        del out["precipitation_probability_max"]
+    if all(v is None for v in out["uv_index_max"]):
+        del out["uv_index_max"]
+    return out
+
+
+YR = {"clearsky": 0, "fair": 1, "partlycloudy": 2, "cloudy": 3, "fog": 45, "lightrain": 61, "rain": 63, "heavyrain": 65,
+      "lightrainshowers": 80, "rainshowers": 80, "heavyrainshowers": 82, "lightsleet": 66, "sleet": 66, "heavysleet": 67,
+      "lightsleetshowers": 66, "sleetshowers": 66, "heavysleetshowers": 67, "lightsnow": 71, "snow": 73, "heavysnow": 75,
+      "lightsnowshowers": 85, "snowshowers": 85, "heavysnowshowers": 86}
+
+
+def yr_code(symbol):
+    """Значок yr.no («partlycloudy_night») -> (код WMO, день ли)."""
+    base = symbol.split("_")[0]
+    code = 95 if "thunder" in base else YR.get(base, 3)
+    return code, not symbol.endswith("_night")
+
+
+def fetch_metno(lat, lon):
+    """MET Norway (yr.no), без ключа: прогноз по часам на 9 дней. Время приходит в UTC — переводим в местное."""
+    req = urllib.request.Request("https://api.met.no/weatherapi/locationforecast/2.0/complete?" +
+                                 urllib.parse.urlencode({"lat": f"{lat:.4f}", "lon": f"{lon:.4f}"}),
+                                 headers={"User-Agent": METNO_AGENT})
+    with urllib.request.urlopen(req, timeout=10) as r:
+        series = json.load(r)["properties"]["timeseries"]
+    hourly = {"time": [], "temperature_2m": [], "weather_code": [], "precipitation_probability": [], "is_day": []}
+    days = {}
+    for s in series:
+        t = datetime.fromisoformat(s["time"].replace("Z", "+00:00")).astimezone()
+        det = s["data"]["instant"]["details"]
+        nxt = s["data"].get("next_1_hours") or s["data"].get("next_6_hours") or {}
+        symbol = (nxt.get("summary") or {}).get("symbol_code", "")
+        code, is_day = yr_code(symbol) if symbol else (3, True)
+        pop = (nxt.get("details") or {}).get("probability_of_precipitation")
+        if "next_1_hours" in s["data"]:
+            for k, v in (("time", t.strftime("%Y-%m-%dT%H:00")), ("temperature_2m", det["air_temperature"]),
+                         ("weather_code", code), ("precipitation_probability", pop), ("is_day", int(is_day))):
+                hourly[k].append(v)
+        d = days.setdefault(t.date().isoformat(), {"t": [], "codes": [], "pop": [], "uv": []})
+        d["t"].append(det["air_temperature"])
+        if symbol:
+            d["codes"].append((t.hour, code))
+        if pop is not None:
+            d["pop"].append(pop)
+        if det.get("ultraviolet_index_clear_sky") is not None:
+            d["uv"].append(det["ultraviolet_index_clear_sky"])
+    first = series[0]
+    det = first["data"]["instant"]["details"]
+    symbol = ((first["data"].get("next_1_hours") or {}).get("summary") or {}).get("symbol_code", "cloudy")
+    code, is_day = yr_code(symbol)
+    daily = _pick_daily(days)
+    try:  # восход и закат — тоже у MET Norway; не ответили — просто без них
+        offset = datetime.now().astimezone().strftime("%z")
+        req = urllib.request.Request("https://api.met.no/weatherapi/sunrise/3.0/sun?" + urllib.parse.urlencode(
+            {"lat": f"{lat:.4f}", "lon": f"{lon:.4f}", "date": date.today().isoformat(),
+             "offset": offset[:3] + ":" + offset[3:]}), headers={"User-Agent": METNO_AGENT})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            sun = json.load(r)["properties"]
+        daily["sunrise"] = [sun["sunrise"]["time"][:16]]
+        daily["sunset"] = [sun["sunset"]["time"][:16]]
+    except Exception:
+        pass
+    return {"current": {"temperature_2m": det["air_temperature"], "weather_code": code,
+                        "wind_speed_10m": det.get("wind_speed", 0), "relative_humidity_2m": round(det["relative_humidity"])
+                        if det.get("relative_humidity") is not None else None, "is_day": int(is_day),
+                        "pressure_msl": det.get("air_pressure_at_sea_level"),
+                        "wind_direction_10m": det.get("wind_from_direction"),
+                        "wind_gusts_10m": det.get("wind_speed_of_gust")},
+            "hourly": hourly, "daily": daily, "fixed": {"text": CODES.get(code, ""), "source": "MET Norway (yr.no)"}}
+
+
+def owm_code(i):
+    """Код погоды OpenWeatherMap -> код WMO (для наших значков)."""
+    if 200 <= i < 300:
+        return 95
+    if 300 <= i < 400:
+        return 53
+    if i in (500, 501, 502):
+        return {500: 61, 501: 63, 502: 65}[i]
+    if 503 <= i <= 504:
+        return 65
+    if i == 511 or 611 <= i <= 616:
+        return 66
+    if 520 <= i < 600:
+        return 80
+    if i in (600, 601, 602):
+        return {600: 71, 601: 73, 602: 75}[i]
+    if 620 <= i < 700:
+        return 85
+    if 700 <= i < 800:
+        return 45
+    return {800: 0, 801: 1, 802: 2}.get(i, 3)
+
+
+def fetch_owm(lat, lon, key):
+    """OpenWeatherMap по твоему ключу (бесплатные «сейчас» и прогноз по 3 часа на 5 дней)."""
+    def get(name):
+        url = f"https://api.openweathermap.org/data/2.5/{name}?" + urllib.parse.urlencode(
+            {"lat": lat, "lon": lon, "appid": key, "units": "metric", "lang": "en" if LANG == "en" else "ru"})
+        with urllib.request.urlopen(url, timeout=10) as r:
+            return json.load(r)
+    cur, fc = get("weather"), get("forecast")
+    tz = timezone(timedelta(seconds=cur.get("timezone", 0)))  # время места, а не компьютера
+    local = lambda ts: datetime.fromtimestamp(ts, tz)  # noqa: E731
+    w = cur["weather"][0]
+    hourly = {"time": [], "temperature_2m": [], "weather_code": [], "precipitation_probability": [], "is_day": []}
+    days = {}
+    items = fc.get("list", [])
+    for n, it in enumerate(items):
+        t = local(it["dt"])
+        code = owm_code(it["weather"][0]["id"])
+        pop = round(it.get("pop", 0) * 100)
+        nxt = items[n + 1]["main"]["temp"] if n + 1 < len(items) else it["main"]["temp"]
+        for h in range(3):  # прогноз по 3 часа — по часам, температура плавно к следующей точке
+            hourly["time"].append((t + timedelta(hours=h)).strftime("%Y-%m-%dT%H:00"))
+            hourly["temperature_2m"].append(it["main"]["temp"] + (nxt - it["main"]["temp"]) * h / 3)
+            hourly["weather_code"].append(code)
+            hourly["precipitation_probability"].append(pop)
+            hourly["is_day"].append(int(it.get("sys", {}).get("pod", "d") == "d"))
+        d = days.setdefault(t.date().isoformat(), {"t": [], "codes": [], "pop": [], "uv": []})
+        d["t"] += [it["main"]["temp_max"], it["main"]["temp_min"]]
+        d["codes"].append((t.hour, code))
+        d["pop"].append(pop)
+    today = local(cur["dt"]).date().isoformat()
+    days.setdefault(today, {"t": [], "codes": [], "pop": [], "uv": []})
+    days[today]["t"].append(cur["main"]["temp"])
+    daily = _pick_daily(days)
+    if "sunrise" in cur.get("sys", {}):
+        daily["sunrise"] = [local(cur["sys"]["sunrise"]).strftime("%Y-%m-%dT%H:%M")]
+        daily["sunset"] = [local(cur["sys"]["sunset"]).strftime("%Y-%m-%dT%H:%M")]
+    m = cur["main"]
+    return {"current": {"temperature_2m": m["temp"], "weather_code": owm_code(w["id"]),
+                        "wind_speed_10m": cur.get("wind", {}).get("speed", 0), "relative_humidity_2m": m.get("humidity"),
+                        "is_day": int(w.get("icon", "d").endswith("d")), "pressure_msl": m.get("sea_level", m.get("pressure")),
+                        "wind_direction_10m": cur.get("wind", {}).get("deg"), "wind_gusts_10m": cur.get("wind", {}).get("gust")},
+            "hourly": hourly, "daily": daily,
+            "fixed": {"text": w.get("description", ""), "feels": m.get("feels_like"),
+                      "visibility": cur["visibility"] / 1000 if cur.get("visibility") is not None else None,
+                      "source": "OpenWeatherMap"}}
 
 
 def find_places(query):
@@ -188,35 +387,112 @@ def fetch(place):
             if not found:
                 return {"error": tr("город не найден")}
             name, lat, lon = found[0]["city"], found[0]["lat"], found[0]["lon"]
-        key = config.section("weather").get("yandex_key")
-        if valid_key(key):  # есть ключ Яндекса — берём всё у него
+        cfg = config.section("weather")
+        source = current_source(cfg)
+        sites = {"yandex": lambda: fetch_yandex(lat, lon, cfg["yandex_key"]), "metno": lambda: fetch_metno(lat, lon),
+                 "owm": lambda: fetch_owm(lat, lon, cfg["owm_key"]), "openmeteo": lambda: fetch_openmeteo(lat, lon, source)}
+        # выбранный сайт, не ответил — Open-Meteo, не ответил и он (у него бывает просроченный сертификат и обрывы) —
+        # yr.no без ключа; под погодой пишем, кто не ответил
+        chain = ([source] if source in sites and source != "openmeteo" else []) + ["openmeteo"]
+        if source != "metno":
+            chain.append("metno")
+        note, last = "", None
+        for site in chain:
             try:
-                data = fetch_yandex(lat, lon, key)
-                data["name"] = name
-                return data
+                data = sites[site]()
             except Exception as ex:
-                yandex_error = tr("Яндекс не ответил ({}) — ").format(getattr(ex, 'code', type(ex).__name__))
-        else:
-            yandex_error = ""
-        data = get_json("https://api.open-meteo.com/v1/forecast", latitude=lat, longitude=lon,
-                        current="temperature_2m,weather_code,wind_speed_10m,relative_humidity_2m,is_day,"
-                                "apparent_temperature,pressure_msl,wind_direction_10m,wind_gusts_10m",
-                        hourly="temperature_2m,weather_code,precipitation_probability,is_day",
-                        daily="weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,uv_index_max,"
-                              "precipitation_probability_max",
-                        wind_speed_unit="ms", timezone="auto", forecast_days=4)
-        data["name"] = name
-        data["note"] = yandex_error
-        st = fetch_station(lat, lon)
+                last = ex
+                label = SOURCES[source] if site == source else ("Open-Meteo" if site == "openmeteo" else SOURCES[site])
+                code = getattr(ex, "code", None)
+                if code in (401, 403):  # сервер ответил, но ключ не подошёл (неверный, ещё не включён, кончился)
+                    note += tr("{} не принял ключ — ").format(label)
+                else:
+                    note += tr("{} не ответил ({}) — ").format(label, code or type(ex).__name__)
+                continue
+            data["name"] = name
+            data["note"] = note
+            if note and data.get("fixed"):
+                data["fixed"]["source"] = note + data["fixed"]["source"]
+            return data
+        raise last
+    except Exception as ex:  # нет сети и т.п.
+        return {"error": tr("нет связи ({})").format(type(ex).__name__)}
+
+
+def fetch_openmeteo(lat, lon, source):
+    """Open-Meteo (модель) и поправка по ближайшей метеостанции, если она не совсем рядом."""
+    data = get_json("https://api.open-meteo.com/v1/forecast", latitude=lat, longitude=lon,
+                    current="temperature_2m,weather_code,wind_speed_10m,relative_humidity_2m,is_day,"
+                            "apparent_temperature,pressure_msl,wind_direction_10m,wind_gusts_10m",
+                    hourly="temperature_2m,weather_code,precipitation_probability,is_day",
+                    daily="weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,uv_index_max,"
+                          "precipitation_probability_max",
+                    wind_speed_unit="ms", timezone="auto", forecast_days=4)
+    try:  # станция — только уточнение: не ответила — погода всё равно есть
+        st = fetch_station(lat, lon) if source != "model" else None
         if st and st["km"] > 5:
             # сколько модель ошибается на станции прямо сейчас — на столько поправим и у тебя
             at = get_json("https://api.open-meteo.com/v1/forecast", latitude=st["lat"], longitude=st["lon"],
                           elevation=st["elev"], current="temperature_2m")
             st["bias"] = st["temp"] - at["current"]["temperature_2m"]
-        data["station"] = st
-        return data
-    except Exception as ex:  # нет сети и т.п.
-        return {"error": tr("нет связи ({})").format(type(ex).__name__)}
+    except Exception:
+        st = None
+    data["station"] = st
+    return data
+
+
+ALERT = os.path.join(ROOT, "weather_alert.json")  # для динамического острова: «через 40 мин дождь»
+
+
+def precip_kind(code):
+    """Осадки по коду WMO: 'rain' / 'snow' / 'storm' или None (сухо; туман — тоже сухо)."""
+    if code is None or code < 51:
+        return None
+    if 95 <= code <= 99:
+        return "storm"
+    if 71 <= code <= 77 or code in (85, 86):
+        return "snow"
+    return "rain"
+
+
+def weather_alert(data, now=None):
+    """Резкая смена на ближайшие 3 часа: сухо -> осадки («start») или осадки -> сухо («stop»).
+    -> {"key", "event", "kind", "at" (ЧЧ:ММ), "minutes", "temp", "updated"} или None. Почасовой прогноз — точность
+    до часа; вероятность меньше 50% — не повод дёргать остров."""
+    h = data.get("hourly") or {}
+    times, codes = h.get("time") or [], h.get("weather_code") or []
+    pops = h.get("precipitation_probability") or [None] * len(times)
+    now = now or datetime.now()
+    stamp = now.strftime("%Y-%m-%dT%H:00")
+    if stamp not in times:
+        return None
+    i = times.index(stamp)
+    cur = now_values(data)
+    wet_now = precip_kind(cur["code"])
+    for j in range(i + 1, min(i + 4, len(times))):
+        kind = precip_kind(codes[j])
+        sure = pops[j] is None or pops[j] >= 50
+        at = datetime.fromisoformat(times[j])
+        if not wet_now and kind and sure:
+            event = "start"
+        elif wet_now and not kind:
+            event, kind = "stop", wet_now
+        else:
+            continue
+        return {"key": f"{event}-{kind}-{times[j]}", "event": event, "kind": kind, "at": at.strftime("%H:%M"),
+                "minutes": max(0, round((at - now).total_seconds() / 60)), "temp": round(cur["temp"]),
+                "updated": time.time()}
+    return None
+
+
+def save_alert(alert):
+    try:
+        tmp = ALERT + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(alert or {}, f, ensure_ascii=False)
+        os.replace(tmp, ALERT)
+    except OSError:
+        pass
 
 
 class WeatherWidget(DesktopWidget):
@@ -282,28 +558,55 @@ class WeatherWidget(DesktopWidget):
         self.refresh()
 
     def double_click(self):
-        city = urllib.parse.quote(self.cfg.get("city", tr("Москва")))
-        open_uri(f"https://www.google.com/search?q=%D0%BF%D0%BE%D0%B3%D0%BE%D0%B4%D0%B0+{city}")  # «погода город»
-
-    def ask_yandex(self):
-        """Свой ключ Яндекс Погоды: вставляешь сам; пусто — снова станция + модель."""
-        key, ok = QInputDialog.getText(
-            None, tr("Яндекс Погода"),
-            tr("Ключ API Яндекс Погоды (берётся в кабинете разработчика:\n"
-            "yandex.ru/pogoda/b2b/console). Пусто — без Яндекса."),
-            QLineEdit.Password, config.section("weather").get("yandex_key", ""))
-        if not ok:
-            return
-        w = config.section("weather")
-        if key.strip() and not valid_key(key.strip()):
-            QMessageBox.information(None, tr("Яндекс Погода"), tr("Это не похоже на ключ: ключ — одна строка без пробелов.\n"
-                                    "Скопируй сам ключ из кабинета, а не пример кода."))
-            return
-        if key.strip():
-            w["yandex_key"] = key.strip()
+        """Открыть погоду на сайте, откуда она сейчас (у Open-Meteo своей страницы нет — поиск «погода город»)."""
+        lat, lon = self.cfg.get("lat"), self.cfg.get("lon")
+        source = current_source(self.cfg)
+        if lat is not None and source == "metno":
+            open_uri(f"https://www.yr.no/en/forecast/daily-table/{lat:.4f},{lon:.4f}")
+        elif lat is not None and source == "yandex":
+            open_uri(f"https://yandex.ru/pogoda/?lat={lat:.4f}&lon={lon:.4f}")
+        elif lat is not None and source == "owm":
+            open_uri(f"https://openweathermap.org/weathermap?basemap=map&cities=true&layer=temperature&lat={lat:.4f}&lon={lon:.4f}&zoom=10")
         else:
-            w.pop("yandex_key", None)
+            city = urllib.parse.quote(self.cfg.get("city", tr("Москва")))
+            open_uri(f"https://www.google.com/search?q=%D0%BF%D0%BE%D0%B3%D0%BE%D0%B4%D0%B0+{city}")  # «погода город»
+
+    KEY_HELP = {
+        "yandex": tr("Ключ API Яндекс Погоды (берётся в кабинете разработчика:\n"
+                     "yandex.ru/pogoda/b2b/console). Пусто — убрать ключ."),
+        "owm": tr("Ключ API OpenWeatherMap (бесплатный: home.openweathermap.org/api_keys;\n"
+                  "новый ключ начинает работать не сразу, бывает до пары часов). Пусто — убрать ключ."),
+    }
+
+    def ask_key(self, source):
+        """Свой ключ сайта погоды: вставляешь сам; хранится только в config.json. -> есть ли теперь ключ."""
+        field = KEYS[source]
+        key, ok = QInputDialog.getText(None, SOURCES[source], self.KEY_HELP[source], QLineEdit.Password,
+                                       self.cfg.get(field, ""))
+        if not ok:
+            return valid_key(self.cfg.get(field))
+        key = key.strip()
+        if key and not valid_key(key):
+            QMessageBox.information(None, SOURCES[source], tr("Это не похоже на ключ: ключ — одна строка без пробелов.\n"
+                                    "Скопируй сам ключ из кабинета, а не пример кода."))
+            return valid_key(self.cfg.get(field))
+        if key:
+            self.cfg[field] = key
+        else:
+            self.cfg.pop(field, None)
+            if self.cfg.get("source") == source:  # ключ убрали — и сайт этот больше не выбран
+                self.cfg["source"] = "auto"
         config.save()
+        self.refresh_all()
+        return bool(key)
+
+    def set_source(self, source):
+        """Выбрать сайт погоды (для Погоды и Метеочасов). Сайту нужен ключ, а его нет — сначала спросить."""
+        if source in KEYS and not valid_key(self.cfg.get(KEYS[source])) and not self.ask_key(source):
+            return
+        self.cfg["source"] = source
+        config.save()
+        self.info.setText(tr("загрузка…"))
         self.refresh_all()
 
     def refresh_all(self):
@@ -314,7 +617,16 @@ class WeatherWidget(DesktopWidget):
 
     def add_actions(self, menu):
         menu.addAction(tr("Город или село…"), self.ask_city)
-        menu.addAction(tr("Яндекс Погода (свой ключ)…"), self.ask_yandex)
+        sub = menu.addMenu(tr("Откуда погода"))
+        now = current_source(self.cfg)
+        for name, label in SOURCES.items():
+            text = label + (tr(" (свой ключ)") if name in KEYS else "")
+            a = sub.addAction(text, lambda n=name: self.set_source(n))
+            a.setCheckable(True)
+            a.setChecked(name == now)
+        sub.addSeparator()
+        for name in KEYS:
+            sub.addAction(tr("Ключ: {}…").format(SOURCES[name]), lambda n=name: self.ask_key(n))
         menu.addAction(tr("Обновить"), self.refresh)
 
     def ask_city(self):
@@ -359,6 +671,10 @@ class WeatherWidget(DesktopWidget):
                 QTimer.singleShot(60 * 1000, self._retry)
             return
         now = now_values(data)
+        try:
+            save_alert(weather_alert(data))
+        except (KeyError, TypeError, ValueError):
+            pass
         self.city.setText(data["name"])
         self.icon.setPixmap(icons.pixmap(icons.weather_kind(now["code"], now["is_day"]), 52))
         self.temp.setText(f"{now['temp']:+.0f}°")
@@ -405,8 +721,8 @@ class WeatherWidget(DesktopWidget):
         """Подробности: ощущается, давление, ветер (откуда и порывы), осадки сегодня, УФ, восход и закат."""
         self._clear(self.stats)
         cur, d = data.get("current", {}), data.get("daily", {})
-        bias = (data.get("station") or {}).get("bias", 0.0) if "yandex" not in data else 0.0
-        feels = data.get("yandex", {}).get("feels")
+        bias = (data.get("station") or {}).get("bias", 0.0) if "fixed" not in data else 0.0
+        feels = (data.get("fixed") or {}).get("feels")
         if feels is None and cur.get("apparent_temperature") is not None:
             feels = cur["apparent_temperature"] + bias
         cells = []

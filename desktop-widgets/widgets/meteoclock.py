@@ -95,8 +95,9 @@ class MeteoClockWidget(DesktopWidget):
         r = QRectF(self.card())
         now = datetime.now()
         # всё, кроме стрелок, меняется раз в минуту — рисуем в картинку один раз и кладём каждый кадр
-        weather = tuple(sorted(self.weather.items())) if self.weather else None
-        key = (self.card().size(), bool(self.dark), now.strftime("%Y%m%d%H%M"), weather, self.devicePixelRatioF())
+        # ключ считается 15 раз в секунду — без strftime и сортировки: погода меняется только в on_weather
+        key = (self.card().size(), bool(self.dark), (now.day, now.hour, now.minute), id(self.weather),
+               self.devicePixelRatioF())
         if key != self.face_key:
             self.face_key = key
             dpr = self.devicePixelRatioF()

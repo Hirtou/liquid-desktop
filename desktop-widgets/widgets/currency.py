@@ -12,7 +12,16 @@ from widgets.weather import get_json
 # код -> (знак, цвет значка)
 MONEY = {"USD": ("$", "#2fbf71"), "EUR": ("€", "#2f6bff"), "RUB": ("₽", "#6c5ce7"), "CNY": ("¥", "#ff5a5f"),
          "KZT": ("₸", "#16a3c9"), "GBP": ("£", "#8a6cff"), "TRY": ("₺", "#e5486b"), "UZS": (tr("сўм"), "#2c9a6b")}
-BASES = ("KZT", "RUB", "USD")
+def money(value):
+    """1 234 / 12.34 / 0.0019 — у мелких курсов (тенге в долларах) значащие цифры, а не «0.00»."""
+    if value >= 1000:
+        return f"{value:,.0f}".replace(",", " ")
+    if value >= 1:
+        return f"{value:,.2f}".replace(",", " ")
+    return f"{value:.2g}" if value >= 0.0001 else f"{value:.1e}"
+
+
+BASES = ("USD", "RUB", "KZT")
 WATCH = {"KZT": ["USD", "EUR", "RUB", "CNY"], "RUB": ["USD", "EUR", "CNY", "KZT"],
          "USD": ["EUR", "RUB", "KZT", "CNY"]}
 ROW = 40
@@ -29,7 +38,7 @@ class CurrencyWidget(DesktopWidget):
 
     def __init__(self, **kw):
         super().__init__(**kw)
-        self.cfg.setdefault("base", "KZT")
+        self.cfg.setdefault("base", "USD")
         self.apply_shape()
         self.error = None
         self.loaded.connect(self.on_data)
@@ -139,7 +148,7 @@ class CurrencyWidget(DesktopWidget):
             p.setPen(fg)
             p.drawText(QRectF(r.left() + 38, top, 80, 34), Qt.AlignLeft | Qt.AlignVCenter, code)
             value = rates[code]
-            text = f"{value:,.2f}".replace(",", " ") if value < 1000 else f"{value:,.0f}".replace(",", " ")
+            text = money(value)
             p.setFont(val_font)
             p.drawText(QRectF(r.left(), top, r.width() - 64, 34), Qt.AlignRight | Qt.AlignVCenter, text)
             old = prev.get(code)
@@ -180,7 +189,7 @@ class CurrencyWidget(DesktopWidget):
         big.setPixelSize(34)
         p.setFont(big)
         p.drawText(QRectF(r.left(), top + 38, r.width(), 40), Qt.AlignLeft | Qt.AlignVCenter,
-                   f"{value:,.2f}".replace(",", " ") if value < 1000 else f"{value:,.0f}".replace(",", " "))
+                   money(value))
         old = prev.get(code)
         change = (value - old) / old * 100 if old else 0
         small = QFont("Segoe UI")

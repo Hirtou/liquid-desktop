@@ -1,6 +1,6 @@
 """Динамический остров — как «Жидкое облако» в ColorOS 17: капсула из тёмного стекла вверху по центру главного экрана.
 
-Пока ничего не происходит, её нет. Появляется, когда что-то идёт: музыка, таймер, помидор, на пару секунд — громкость, «скопировано», Caps Lock, смена устройства звука.
+Пока ничего не происходит, её нет. Появляется, когда что-то идёт: музыка, таймер, помидор; на пару секунд — громкость, «скопировано», Caps Lock, смена устройства звука.
 Наведи мышь (или кликни) — перетекает в карточку с кнопками. Колесо над островом — громкость.
 Сменился трек, таймер дозвенел, помидор готов — раскрывается сама.
 Два дела сразу — второе отделяется каплей справа (клик по ней — поменять местами). В игре на весь экран прячется.
@@ -28,7 +28,7 @@ from PySide6.QtWidgets import QApplication, QMenu, QWidget
 import screen
 from bridge import (Audio, focus_cfg, focus_left, focus_length, focus_today, settings, timer_cfg, timer_left,
                     widgets)
-from media import Media, accent, glyph, toggle_glyph
+from media import Media, YT_MUSIC_URL, accent, glyph, toggle_glyph
 
 POOL = ThreadPoolExecutor(max_workers=1)
 WIN_W, WIN_H = 520, 200  # окно с запасом под самую большую карточку и свечение; пустое место пропускает мышь
@@ -60,14 +60,13 @@ def soft(a):
     return QColor(255, 255, 255, a) if DARK else QColor(0, 0, 0, int(a * 0.8))
 ORANGE, RED, GREEN, YELLOW = QColor("#ff9f0a"), QColor("#ff453a"), QColor("#30d158"), QColor("#ffd60a")
 TOMATO, BLUE = QColor("#ff6b5a"), QColor("#4c8dff")
-WORK = ("think", "read", "edit", "run", "web", "greet", "oops")
 
 # размер капсулы: (дело, раскрыта) -> (ширина, высота)
-SIZES = {("music", False): (200, H), ("music", True): (384, 156), ("music", "mini"): (310, H),
+SIZES = {("music", False): (236, H), ("music", True): (384, 156), ("music", "mini"): (372, H),
          ("timer", False): (164, H), ("timer", True): (364, 100),
          ("focus", False): (172, H), ("focus", True): (364, 100)}
 # короткие сообщения: ширина; не раскрываются
-TOASTS = {"volume": 270, "clip": 300, "caps": 196, "device": 290, "island": 260}
+TOASTS = {"volume": 270, "clip": 300, "caps": 196, "device": 290, "island": 260, "weather": 300}
 HOTKEY_ID = 1
 
 
@@ -237,6 +236,7 @@ class Island(QWidget):
         self.audio_checked = time.monotonic()
         self.caps = screen.caps_lock()
         self.started = time.monotonic()
+        self.weather_key = None
         self.bg_ready.connect(self.on_bg)
         QApplication.clipboard().dataChanged.connect(self.on_clip)
         Media.get().changed.connect(self.on_media)
@@ -467,6 +467,8 @@ class Island(QWidget):
             if had and music.get("playing"):  # сменился трек — показать какой, с волной
                 self.mini_until = time.monotonic() + 3.5  # сменился трек — капсула чуть шире, с названием
                 self.ripple(None, self.color)
+        elif music and self.color is None and music.get("cover") is not None:  # обложка браузера приходит позже трека
+            self.color = accent(music["cover"])
         if music and self.music and music.get("playing") != self.music.get("playing") and self.view \
                 and self.view[0] == "music":
             self.ripple(None, self.color)
@@ -561,6 +563,15 @@ class Island(QWidget):
             self.show_toast("volume", 1.8)
         self.vol = vol
 
+    def check_weather(self):
+        """«Через 40 мин дождь» / «Дождь закончится к 16:00» — из виджета «Погода», каждое — один раз."""
+        alert = widgets.weather_alert()
+        if alert and alert["key"] != self.weather_key:
+            self.weather_key = alert["key"]
+            if time.monotonic() - self.started > 5:  # не при запуске острова: это было бы старое
+                self.show_toast("weather", 5, precip=alert.get("kind"),
+                                **{k: alert.get(k) for k in ("event", "at", "minutes", "temp")})
+
     def check_caps(self):
         caps = screen.caps_lock()
         if caps != self.caps:
@@ -629,6 +640,7 @@ class Island(QWidget):
         self.refresh_look()
         self.check_audio()
         self.check_caps()
+        self.check_weather()
         if self.toast and time.monotonic() >= self.toast["until"]:
             self.toast = None
         ts = self.timer_state(now)
@@ -884,11 +896,17 @@ class Island(QWidget):
 
     def hover_check(self, pos):
         """Раскрываться только над самой капсулой: над каплей второго дела — нет (клик по ней — поменять местами)."""
-        if self.shapes()[0].contains(pos):
+        if self.shapes()[0].contains(pos) and not self.over_arrows(pos):
             if not self.hover and not self.enter_timer.isActive():
                 self.enter_timer.start()
         else:
             self.enter_timer.stop()
+
+    def over_arrows(self, pos):
+        """Мышь над ⏮ ⏯ ⏭ свёрнутой капсулы с музыкой: тут не раскрываться, иначе по ним не попасть."""
+        if self.hover or self.view not in (("music", False), ("music", "mini")):
+            return False
+        return any(self.buttons[n].contains(pos) for n in ("prev", "play", "next") if n in self.buttons)
 
     def leaveEvent(self, event):
         self.enter_timer.stop()
@@ -973,7 +991,7 @@ class Island(QWidget):
             self.retarget()
         elif kind == "music":
             import os
-            os.startfile("spotify:")
+            os.startfile(YT_MUSIC_URL if (self.music or {}).get("source") == "ytmusic" else "spotify:")
 
     def press(self, name):
         now = time.time()
@@ -1203,14 +1221,27 @@ class Island(QWidget):
             p.drawRect(QRectF(c.x() - 0.6 * k, c.y() - 7 * k, 1.6 * k, 11 * k))
             p.drawRect(QRectF(c.x() - 0.6 * k, c.y() - 7 * k, 5.5 * k, 1.8 * k))
 
+    def track_arrows(self, p, r, playing):
+        """⏮ ⏯ ⏭ у правого края свёрнутой капсулы (обычной и «сменился трек»): переключать и ставить на паузу,
+        не раскрывая."""
+        for name, dx in (("prev", -84), ("play", -52), ("next", -20)):
+            c = QPointF(r.right() + dx, r.center().y())
+            self.buttons[name] = QRectF(c.x() - 15, r.top(), 30, r.height())  # по высоте всей капсулы — легко попасть
+            p.save()
+            p.translate(c)
+            p.scale(0.82, 0.82)  # значки те же, что в раскрытой карточке, чуть мельче под высоту капсулы
+            glyph(p, name, QPointF(0, 0), FG, playing)
+            p.restore()
+
     def draw_music(self, p, r, big):
         s = self.music
         if not s:
             return
         playing = s.get("playing")
-        if big == "mini":  # сменился трек: обложка, название · исполнитель, эквалайзер
+        if big == "mini":  # сменился трек: обложка, название · исполнитель, эквалайзер и ⏮ ⏯ ⏭
             self.cover(p, QRectF(r.left() + 6, r.top() + 6, 24, 24), 8)
-            x, w = r.left() + 40, r.width() - 40 - 46
+            self.track_arrows(p, r, playing)
+            x, w = r.left() + 40, r.width() - 40 - 46 - 96
             title = s.get("title") or "—"
             f1, f2 = font(13), font(12, "Segoe UI")
             tw = min(QFontMetricsF(f1).horizontalAdvance(title), w)
@@ -1222,11 +1253,12 @@ class Island(QWidget):
                 p.setPen(DIM)
                 p.drawText(QRectF(x + tw + 6, r.top(), w - tw - 6, r.height()), Qt.AlignLeft | Qt.AlignVCenter,
                            elide(s["artist"], f2, w - tw - 6))
-            self.eq(p, r.right() - 36, r.center().y(), playing)
+            self.eq(p, r.right() - 36 - 96, r.center().y(), playing)
             return
-        if not big:
+        if not big:  # капсула: обложка, эквалайзер и ⏮ ⏯ ⏭ — переключать и ставить на паузу, не раскрывая
             self.cover(p, QRectF(r.left() + 6, r.top() + 6, 24, 24), 8)
-            self.eq(p, r.right() - 36, r.center().y(), playing)
+            self.eq(p, r.left() + 40, r.center().y(), playing)
+            self.track_arrows(p, r, playing)
             return
         color = self.kind_color("music")
         self.cover(p, QRectF(r.left() + 16, r.top() + 16, 66, 66), 16)
@@ -1456,6 +1488,27 @@ class Island(QWidget):
             p.setPen(FG)
             p.drawText(QRectF(r.left() + 44, r.top(), w, r.height()), Qt.AlignLeft | Qt.AlignVCenter,
                        elide(tr("Звук: ") + t.get("name", ""), font(13), w))
+        elif kind == "weather":
+            self.weather_icon(p, QPointF(r.left() + 22, cy), t.get("precip"), t.get("event") == "stop")
+            name = {"rain": tr("Дождь"), "snow": tr("Снег"), "storm": tr("Гроза")}.get(t.get("precip"), tr("Дождь"))
+            if t.get("event") == "stop":
+                text = tr("{} закончится к {}").format(name, t.get("at", ""))
+            elif (t.get("minutes") or 0) <= 75:
+                text = tr("{} через {} мин").format(name, max(5, round((t.get("minutes") or 0) / 5) * 5))
+            else:
+                text = tr("{} около {}").format(name, t.get("at", ""))
+            temp = t.get("temp")
+            tw = 46 if temp is not None else 0
+            w = r.width() - 44 - 14 - tw
+            p.setFont(font(13))
+            p.setPen(FG)
+            p.drawText(QRectF(r.left() + 44, r.top(), w, r.height()), Qt.AlignLeft | Qt.AlignVCenter,
+                       elide(text, font(13), w))
+            if temp is not None:
+                p.setFont(font(13, "Bahnschrift SemiBold"))
+                p.setPen(DIM)
+                p.drawText(QRectF(r.right() - 14 - tw, r.top(), tw, r.height()), Qt.AlignRight | Qt.AlignVCenter,
+                           f"{temp:+d}°")
         elif kind == "island":  # вернули горячей клавишей
             p.setPen(Qt.NoPen)
             p.setBrush(GREEN)
@@ -1516,6 +1569,40 @@ class Island(QWidget):
         arrow.closeSubpath()
         p.drawPath(arrow)
         p.drawLine(QPointF(c.x() - 3, c.y() + 7), QPointF(c.x() + 3, c.y() + 7))
+
+    def weather_icon(self, p, c, kind, clearing):
+        """Облако; под ним капли / снежинки / молния. Осадки кончаются — солнце выглядывает из-за облака."""
+        cloud = QPainterPath()
+        cloud.setFillRule(Qt.WindingFill)  # иначе там, где круги перекрываются, — дырки
+        cloud.addEllipse(QPointF(c.x() - 4, c.y() - 1), 5, 5)
+        cloud.addEllipse(QPointF(c.x() + 2.5, c.y() - 3.5), 6.5, 6.5)
+        cloud.addRoundedRect(QRectF(c.x() - 9.5, c.y() - 1, 19, 6.5), 3.2, 3.2)
+        cloud = cloud.simplified().translated(0, -2 if not clearing else 1)
+        p.setPen(Qt.NoPen)
+        if clearing:
+            p.setBrush(YELLOW)
+            p.drawEllipse(QPointF(c.x() + 5, c.y() - 5), 5, 5)
+            p.setBrush(FG)
+            p.drawPath(cloud)
+            return
+        p.setBrush(FG)
+        p.drawPath(cloud)
+        y = c.y() + 7
+        if kind == "storm":
+            bolt = QPainterPath(QPointF(c.x() + 1, y - 2.5))
+            for dx, dy in ((-3.5, 4.5), (-0.5, 4.5), (-2, 8.5), (3, 2.8), (0, 2.8), (1.5, -2.5)):
+                bolt.lineTo(c.x() + dx, y + dy - 2.5)
+            bolt.closeSubpath()
+            p.setBrush(YELLOW)
+            p.drawPath(bolt)
+        elif kind == "snow":
+            p.setBrush(FG)
+            for dx, dy in ((-5, 1), (0, 3), (5, 1)):
+                p.drawEllipse(QPointF(c.x() + dx, y + dy), 1.6, 1.6)
+        else:
+            p.setPen(QPen(BLUE, 1.8, Qt.SolidLine, Qt.RoundCap))
+            for dx in (-5, 0, 5):
+                p.drawLine(QPointF(c.x() + dx + 1, y), QPointF(c.x() + dx - 0.5, y + 4))
 
     def headphones_icon(self, p, c):
         p.setBrush(Qt.NoBrush)

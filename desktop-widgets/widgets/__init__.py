@@ -1,4 +1,14 @@
+from widgets.air import AirWidget
 from widgets.analog import AnalogClockWidget
+from widgets.breathe import BreatheWidget
+from widgets.calc import CalcWidget
+from widgets.clipboard import ClipboardWidget
+from widgets.dice import DiceWidget
+from widgets.habits import HabitsWidget
+from widgets.processes import ProcessesWidget
+from widgets.progress import ProgressWidget
+from widgets.stopwatch import StopwatchWidget
+from widgets.volume import VolumeWidget
 from widgets.calendar_month import CalendarWidget
 from widgets.clock import ClockWidget
 from widgets.countdown import CountdownWidget
@@ -24,6 +34,6 @@ from widgets.worldclock import WorldClockWidget
 
 # каталог: новый виджет — добавить сюда (и значок в icons.TILES)
 ALL = [PlayerWidget, LyricsWidget, MeteoClockWidget, AnalogClockWidget, ClockWidget, WorldClockWidget,
-       WeatherWidget, SunWidget, CalendarWidget, CountdownWidget, TimerWidget, WaterWidget,
-       TodoWidget, NotesWidget, SystemWidget, NetworkWidget, GpuWidget, PingWidget,
-       CurrencyWidget, PhotoWidget, FocusWidget, MoonWidget, QuickWidget]
+       WeatherWidget, AirWidget, SunWidget, CalendarWidget, ProgressWidget, CountdownWidget, TimerWidget, StopwatchWidget, WaterWidget, HabitsWidget,
+       TodoWidget, NotesWidget, ClipboardWidget, CalcWidget, SystemWidget, ProcessesWidget, NetworkWidget, GpuWidget, PingWidget, VolumeWidget,
+       CurrencyWidget, PhotoWidget, FocusWidget, BreatheWidget, DiceWidget, MoonWidget, QuickWidget]

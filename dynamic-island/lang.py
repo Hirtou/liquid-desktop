@@ -11,18 +11,20 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 
 
 def find_widgets_dir():
-    """Папка виджетов рядом с островом: desktop-widgets (как в репозитории) или «виджеты»."""
+    """Папка виджетов рядом с островом: «виджеты» или desktop-widgets (как в репозитории)."""
     parent = os.path.dirname(ROOT)
-    for name in ("desktop-widgets", "виджеты", "widgets"):
+    for name in ("виджеты", "desktop-widgets", "widgets"):
         if os.path.isfile(os.path.join(parent, name, "main.py")):
             return os.path.join(parent, name)
     return os.path.join(parent, "desktop-widgets")
+
+
 LANGS = (("ru", "Русский"), ("en", "English"))
 
 
 def _load(path):
     try:
-        with open(path, encoding="utf-8") as f:
+        with open(path, encoding="utf-8-sig") as f:
             return json.load(f)
     except (OSError, ValueError):
         return {}

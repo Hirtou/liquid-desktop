@@ -19,8 +19,8 @@ from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import (QBrush, QColor, QFont, QFontMetricsF, QLinearGradient, QPainter, QPainterPath, QPen,
                            QPixmap, QTextLayout, QTextOption)
 
-from core import DesktopWidget, RADIUS, ROOT, activity, grid, open_uri
-from widgets.player import Media, accent
+from core import DesktopWidget, RADIUS, ROOT, activity, grid
+from widgets.player import Media, accent, open_player
 
 CACHE = os.path.join(ROOT, "lyrics_cache.json")
 CACHE_MAX = 300           # песен в кэше
@@ -71,7 +71,11 @@ def fetch(artist, title, duration):
         found = _get(API + "search?" + urllib.parse.urlencode({"track_name": title, "artist_name": artist})) or []
         found = [f for f in found if f.get("syncedLyrics") or f.get("plainLyrics")]
         if duration:
-            found = [f for f in found if abs((f.get("duration") or duration) - duration) < 12]
+            close = [f for f in found if abs((f.get("duration") or duration) - duration) < 12]
+            if not close:  # другая версия песни (feat., ремикс, другой длины): синхронный текст разъедется,
+                # а обычный — без времени — подойдёт и так
+                close = [dict(f, syncedLyrics=None) for f in found if f.get("plainLyrics")]
+            found = close
         found.sort(key=lambda f: (not f.get("syncedLyrics"), abs((f.get("duration") or 0) - (duration or 0))))
         d = found[0] if found else d
     if d is None:
@@ -95,7 +99,7 @@ class Cache:
     def __init__(self):
         self.lock = threading.Lock()
         try:
-            with open(CACHE, encoding="utf-8") as f:
+            with open(CACHE, encoding="utf-8-sig") as f:
                 self.data = json.load(f)
         except (OSError, ValueError):
             self.data = {}
@@ -123,7 +127,7 @@ class Cache:
 class LyricsWidget(DesktopWidget):
     key = "lyrics"
     title = tr("Слова песни")
-    description = tr("Текст того, что играет в Spotify")
+    description = tr("Текст того, что играет сейчас")
     SHAPES = {"tall": (tr("Высокий"), grid(2, 2)), "wide": (tr("Широкий"), grid(2, 1))}
     loaded = Signal(object, object)  # (ключ песни, текст или None/"error")
 
@@ -139,7 +143,7 @@ class LyricsWidget(DesktopWidget):
         self.offset = 0.0       # плавная прокрутка: где сейчас «якорь» (px от начала текста)
         self.offset_to = 0.0
         self.layout_key, self.slots = None, []  # раскладка строк: [(верх, высота)] для текущей ширины
-        self.cover_key, self.color = None, None
+        self.cover_key, self.cover_img, self.color = None, None, None
         self.loaded.connect(self.on_loaded)
         Media.get().changed.connect(self.on_state)
         self.anim = QTimer(self, interval=16, timeout=self.step, timerType=Qt.PreciseTimer)
@@ -151,9 +155,10 @@ class LyricsWidget(DesktopWidget):
     def on_state(self, state):
         self.state = state
         if state and "key" in state:
-            if state["key"] != self.cover_key:
-                self.cover_key = state["key"]
-                self.color = accent(state["cover"]) if state.get("cover") is not None else None
+            if state["key"] != self.cover_key or state.get("cover") is not self.cover_img:  # обложка браузера приходит позже
+                self.cover_key, self.cover_img = state["key"], state.get("cover")
+                self.color = accent(self.cover_img) if self.cover_img is not None else None
+                self.update()
             title, artist = state["key"]
             song = (artist or "", title or "")
             if song != self.song:
@@ -313,7 +318,7 @@ class LyricsWidget(DesktopWidget):
         self.update(QRectF(body.topLeft() * k, body.bottomRight() * k).toAlignedRect())
 
     def double_click(self):
-        open_uri("spotify:")
+        open_player(self.state)
 
     # ---------- рисование ----------
 
@@ -343,7 +348,7 @@ class LyricsWidget(DesktopWidget):
         body = self.body_rect()
         msg = None
         if not s or "key" not in s:
-            msg = tr("Spotify сейчас не играет")
+            msg = tr("Сейчас ничего не играет")
         elif self.status == "loading":
             msg = tr("Ищу слова…")
         elif self.status == "error":

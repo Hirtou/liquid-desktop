@@ -28,12 +28,14 @@
 
 Liquid Desktop is two small open-source apps written in Python + PySide6:
 
-- **Desktop Widgets** (`desktop-widgets`) — 23 widgets with live acrylic glass inspired by ColorOS 17:
-  clock, weather clock, weather, calendar, world clock, sun, moon, countdown, timer, pomodoro, water,
-  to-do, notes, photo, player and lyrics (Spotify), system, network, GPU (NVIDIA), ping, currency, quick buttons.
+- **Desktop Widgets** (`desktop-widgets`) — 33 widgets with live acrylic glass inspired by ColorOS 17:
+  clock, weather clock, analog clock, weather, air quality, calendar, world clock, sun, moon, progress of the
+  day/week/month, countdown, timer, stopwatch, pomodoro, breathing, water, habits, to-do, notes, clipboard,
+  calculator, dice, photo, player and lyrics (Spotify and YouTube Music), system, processes, network,
+  GPU (NVIDIA), ping, sound, currency, quick buttons.
 - **Dynamic Island** (`dynamic-island`) — a glass capsule at the top of the main screen. It appears only when
-  something is going on: music, a timer, a pomodoro, volume changes, "copied", Caps Lock, audio device switch.
-  Hover it to expand into a card with controls.
+  something is going on: music (with ⏮ ⏯ ⏭ right in the capsule), a timer, a pomodoro, rain or snow coming soon,
+  volume changes, "copied", Caps Lock, audio device switch. Hover it to expand into a card with controls.
 
 ### Quick start — no Python needed
 
@@ -61,7 +63,9 @@ If Windows SmartScreen asks, click **More info → Run anyway** (the files are n
 4. Both apps keep running in the **system tray** (near the clock). Closing a window doesn't quit the app —
    use **Quit** in the tray menu.
 
-Keep both folders next to each other: the island reads the timer and pomodoro from the widgets.
+Keep both folders next to each other: the island reads the timer, pomodoro and weather from the widgets.
+If the island has **Start with Windows** on, the widgets also bring it back when it isn't running
+(unless you quit it from the tray).
 
 ### Where things are
 
@@ -75,7 +79,7 @@ Keep both folders next to each other: the island reads the timer and pomodoro fr
 | Hide / show the island | **Ctrl+Alt+I** (change in `dynamic-island/config.json` → `"hotkey"`) |
 | Volume | Mouse wheel over the island |
 | Spotify "like" button (optional) | Right-click the Player → sign in (needs your own free Client ID from developer.spotify.com) |
-| Yandex Weather (optional) | Right-click Weather → Yandex Weather (your own key) |
+| Weather source | Right-click Weather → **Weather source**: Open-Meteo (default, no key), MET Norway (yr.no, no key), Yandex Weather or OpenWeatherMap (your own key). If a site doesn't answer, the weather comes from another one |
 
 Your settings are saved to `config.json` inside each folder. They are personal and are not part of the repository.
 
@@ -104,13 +108,14 @@ Your settings are saved to `config.json` inside each folder. They are personal a
 
 Liquid Desktop — две небольшие программы с открытым исходным кодом на Python + PySide6:
 
-- **Виджеты** (`desktop-widgets`) — 23 виджета с живым акриловым стеклом в стиле ColorOS 17:
-  часы, метеочасы, погода, календарь, мировое время, солнце, луна, отсчёт, таймер, помидор, вода,
-  дела, заметки, фото, плеер и слова песни (Spotify), система, сеть, видеокарта (NVIDIA), пинг, курсы валют,
-  быстрые кнопки.
+- **Виджеты** (`desktop-widgets`) — 33 виджета с живым акриловым стеклом в стиле ColorOS 17:
+  часы, метеочасы, циферблат, погода, воздух, календарь, мировое время, солнце, луна, прогресс дня/недели/месяца,
+  отсчёт, таймер, секундомер, помидор, дыхание, вода, привычки, дела, заметки, буфер, калькулятор, кубик, фото,
+  плеер и слова песни (Spotify и YouTube Music), система, процессы, сеть, видеокарта (NVIDIA), пинг, звук,
+  курсы валют, быстрые кнопки.
 - **Динамический остров** (`dynamic-island`) — стеклянная капсула вверху главного экрана. Появляется, только
-  когда что-то происходит: музыка, таймер, помидор, громкость, «скопировано», Caps Lock, смена устройства звука.
-  Наведи мышь — раскроется карточкой с кнопками.
+  когда что-то происходит: музыка (с ⏮ ⏯ ⏭ прямо в капсуле), таймер, помидор, скоро дождь или снег, громкость,
+  «скопировано», Caps Lock, смена устройства звука. Наведи мышь — раскроется карточкой с кнопками.
 
 ### Быстрый старт — Python не нужен
 
@@ -138,7 +143,9 @@ Liquid Desktop — две небольшие программы с открыт�
 4. Обе программы работают в **трее** (у часов). Закрытое окно не выключает программу —
    выйти можно через **Выход** в меню значка.
 
-Держи обе папки рядом: остров берёт таймер и помидор из виджетов.
+Держи обе папки рядом: остров берёт таймер, помидор и погоду из виджетов.
+Если у острова включено **Запускать с Windows**, виджеты сами поднимут его, когда он не запущен
+(кроме случая, когда ты вышел из него через трей).
 
 ### Что где
 
@@ -152,7 +159,7 @@ Liquid Desktop — две небольшие программы с открыт�
 | Спрятать / вернуть остров | **Ctrl+Alt+I** (сменить — `dynamic-island/config.json` → `"hotkey"`) |
 | Громкость | Колесо мыши над островом |
 | Сердечко «в любимые» Spotify (по желанию) | Правый клик по плееру → войти (нужен свой бесплатный Client ID на developer.spotify.com) |
-| Яндекс Погода (по желанию) | Правый клик по погоде → Яндекс Погода (свой ключ) |
+| Откуда погода | Правый клик по погоде → **Откуда погода**: Open-Meteo (по умолчанию, без ключа), MET Norway (yr.no, без ключа), Яндекс Погода или OpenWeatherMap (свой ключ). Сайт не ответил — погода берётся с другого |
 
 Настройки сохраняются в `config.json` в каждой папке. Они личные и в репозиторий не попадают.
 

@@ -11,3 +11,9 @@ promo/
 
 # Portable build output / Сборка портативной версии
 build/
+
+# Runtime files / Служебные файлы во время работы
+weather_alert.json
+stopped
+
+*.broken-*.json

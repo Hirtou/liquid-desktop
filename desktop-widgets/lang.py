@@ -13,7 +13,7 @@ LANGS = (("ru", "Русский"), ("en", "English"))
 
 def _read_lang():
     try:
-        with open(os.path.join(ROOT, "config.json"), encoding="utf-8") as f:
+        with open(os.path.join(ROOT, "config.json"), encoding="utf-8-sig") as f:
             return json.load(f).get("app", {}).get("lang", "ru")
     except (OSError, ValueError):
         return "ru"
@@ -23,7 +23,7 @@ LANG = _read_lang()
 EN = {}
 if LANG == "en":
     try:
-        with open(os.path.join(ROOT, "lang_en.json"), encoding="utf-8") as f:
+        with open(os.path.join(ROOT, "lang_en.json"), encoding="utf-8-sig") as f:
             EN = json.load(f)
     except (OSError, ValueError):
         EN = {}

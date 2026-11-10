@@ -187,6 +187,10 @@ TILES = {
     "countdown": ("#FF8A5C", "#E5486B"), "water": ("#36D1FF", "#2F6BFF"),
     "gpu": ("#8BD12F", "#4F8A10"), "ping": ("#5AB8FF", "#2C7BEA"), "focus": ("#FF8A7A", "#E5486B"),
     "moon": ("#3B4152", "#1E2230"), "quick": ("#FFC93C", "#F5A623"), "lyrics": ("#2A2D36", "#121318"),
+    "progress": ("#FFC93C", "#F2842D"), "stopwatch": ("#FF6B6B", "#D92D4A"), "calc": ("#4B5263", "#262A36"),
+    "processes": ("#60A5FA", "#2F5BEA"), "clipboard": ("#A78BFA", "#6D4AE8"), "habits": ("#4ADE80", "#159A6B"),
+    "air": ("#7DD3FC", "#2AA3C9"), "volume": ("#7C5CFF", "#4338CA"), "dice": ("#F87171", "#C92A3E"),
+    "breathe": ("#2DD4BF", "#0E8F83"),
 }
 
 
@@ -377,6 +381,85 @@ def _tile_glyph(p, name):
         p.drawPath(path)
         p.setBrush(QColor("#FFC93C"))
         p.drawEllipse(QPointF(64, 38), 6, 6)
+    elif name == "progress":  # три полоски разной длины
+        for i, w in enumerate((46, 30, 54)):
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(255, 255, 255, 70))
+            p.drawRoundedRect(QRectF(22, 30 + i * 16, 56, 9), 4.5, 4.5)
+            p.setBrush(white)
+            p.drawRoundedRect(QRectF(22, 30 + i * 16, w, 9), 4.5, 4.5)
+    elif name == "stopwatch":  # циферблат с кнопкой сверху
+        p.setPen(QPen(white, 6))
+        p.setBrush(Qt.NoBrush)
+        p.drawEllipse(QPointF(50, 56), 25, 25)
+        p.setPen(QPen(white, 6, Qt.SolidLine, Qt.RoundCap))
+        p.drawLine(QPointF(50, 56), QPointF(50, 41))
+        p.drawLine(QPointF(42, 21), QPointF(58, 21))
+        p.drawLine(QPointF(50, 21), QPointF(50, 30))
+    elif name == "calc":  # экран и кнопки
+        p.setPen(Qt.NoPen)
+        p.setBrush(white)
+        p.drawRoundedRect(QRectF(24, 20, 52, 16), 4, 4)
+        for row in range(3):
+            for col in range(3):
+                p.setBrush(QColor("#ff9f0a") if col == 2 else white)
+                p.drawRoundedRect(QRectF(24 + col * 19, 42 + row * 13, 14, 9), 3, 3)
+    elif name == "processes":  # строки разной длины с точками
+        for i, w in enumerate((48, 36, 26)):
+            p.setPen(Qt.NoPen)
+            p.setBrush(white)
+            p.drawEllipse(QPointF(26, 34 + i * 16), 4.5, 4.5)
+            p.drawRoundedRect(QRectF(36, 30 + i * 16, w, 8), 4, 4)
+    elif name == "clipboard":  # планшет с зажимом
+        p.setPen(Qt.NoPen)
+        p.setBrush(white)
+        p.drawRoundedRect(QRectF(27, 24, 46, 56), 8, 8)
+        p.setBrush(QColor("#6D4AE8"))
+        p.drawRoundedRect(QRectF(39, 18, 22, 13), 4, 4)
+        p.setPen(QPen(QColor("#6D4AE8"), 4, Qt.SolidLine, Qt.RoundCap))
+        for i, w in enumerate((28, 28, 18)):
+            p.drawLine(QPointF(36, 44 + i * 11), QPointF(36 + w, 44 + i * 11))
+    elif name == "habits":  # большая галочка в кружке
+        p.setPen(QPen(white, 6))
+        p.setBrush(Qt.NoBrush)
+        p.drawEllipse(QPointF(50, 50), 28, 28)
+        p.setPen(QPen(white, 7, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        p.drawPolyline([QPointF(38, 51), QPointF(47, 60), QPointF(63, 41)])
+    elif name == "air":  # три потока ветра
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(white, 6.5, Qt.SolidLine, Qt.RoundCap))
+        for y, x2, arc in ((36, 62, False), (50, 72, True), (64, 54, False)):
+            p.drawLine(QPointF(22, y), QPointF(x2, y))
+        p.drawArc(QRectF(56, 24, 12, 12), -90 * 16, 180 * 16)
+        p.drawArc(QRectF(66, 38, 12, 12), -90 * 16, 180 * 16)
+        p.drawArc(QRectF(48, 64, 12, 12), -90 * 16, -180 * 16 + 360 * 16)
+    elif name == "volume":  # динамик и волны
+        body = QPainterPath(QPointF(24, 42))
+        for x, y in ((35, 42), (50, 28), (50, 72), (35, 58), (24, 58)):
+            body.lineTo(x, y)
+        body.closeSubpath()
+        p.setPen(QPen(white, 3, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        p.setBrush(white)
+        p.drawPath(body)
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(white, 5.5, Qt.SolidLine, Qt.RoundCap))
+        p.drawArc(QRectF(44, 38, 24, 24), -50 * 16, 100 * 16)
+        p.drawArc(QRectF(40, 28, 44, 44), -48 * 16, 96 * 16)
+    elif name == "dice":  # кубик с тремя точками
+        p.setPen(Qt.NoPen)
+        p.setBrush(white)
+        p.drawRoundedRect(QRectF(24, 24, 52, 52), 12, 12)
+        p.setBrush(QColor("#C92A3E"))
+        for x, y in ((37, 37), (50, 50), (63, 63)):
+            p.drawEllipse(QPointF(x, y), 5.5, 5.5)
+    elif name == "breathe":  # расходящиеся круги
+        p.setBrush(Qt.NoBrush)
+        for radius, alpha in ((30, 90), (21, 170)):
+            p.setPen(QPen(QColor(255, 255, 255, alpha), 5))
+            p.drawEllipse(QPointF(50, 50), radius, radius)
+        p.setPen(Qt.NoPen)
+        p.setBrush(white)
+        p.drawEllipse(QPointF(50, 50), 11, 11)
 
 
 @lru_cache(maxsize=32)

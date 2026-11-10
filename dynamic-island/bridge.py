@@ -1,4 +1,4 @@
-"""Связь с виджетами (D:\\Desktop\\виджеты) и своё: настройки острова, громкость.
+"""Связь с виджетами (папка виджетов рядом) и своё: настройки острова, громкость.
 
 Таймер и «Фокус» — те же, что у виджетов: их состояние лежит в config.json виджетов, остров его читает.
 Менять (пауза, +1 мин, сброс) — через сами виджеты, если они запущены (команда «cfg» в их окно-сервер):
@@ -9,16 +9,9 @@ import time
 
 from PySide6.QtNetwork import QLocalSocket
 
+from lang import find_widgets_dir
+
 ROOT = os.path.dirname(os.path.abspath(__file__))
-
-
-def find_widgets_dir():
-    """Папка виджетов рядом с островом: desktop-widgets (как в репозитории) или «виджеты»."""
-    parent = os.path.dirname(ROOT)
-    for name in ("desktop-widgets", "виджеты", "widgets"):
-        if os.path.isfile(os.path.join(parent, name, "main.py")):
-            return os.path.join(parent, name)
-    return os.path.join(parent, "desktop-widgets")
 SERVER = "DesktopWidgets-Liquid"  # окно-сервер виджетов (main.py виджетов)
 
 
@@ -28,10 +21,18 @@ class Settings:
     def __init__(self):
         self.path = os.path.join(ROOT, "config.json")
         try:
-            with open(self.path, encoding="utf-8") as f:
+            with open(self.path, encoding="utf-8-sig") as f:  # -sig: Блокнот мог дописать BOM
                 self.data = json.load(f)
-        except (OSError, ValueError):
+            if not isinstance(self.data, dict):
+                raise ValueError("не словарь")
+        except FileNotFoundError:
             self.data = {}
+        except (OSError, ValueError):  # испорчен — отложить копию, а не затереть молча
+            self.data = {}
+            try:
+                os.replace(self.path, self.path[:-5] + time.strftime(".broken-%Y%m%d-%H%M%S.json"))
+            except OSError:
+                pass
 
     def get(self, key, default=None):
         return self.data.get(key, default)
@@ -53,6 +54,8 @@ class Widgets:
         self.config_path = os.path.join(self.dir, "config.json")
         self.cfg, self.cfg_mtime = {}, 0
         self.alive, self.alive_checked = False, 0.0
+        self.alert_path = os.path.join(self.dir, "weather_alert.json")
+        self.alert_mtime, self.alert_checked = 0, 0.0
 
     def section(self, name):
         """Раздел настроек виджетов (перечитываем, когда файл поменялся)."""
@@ -62,7 +65,7 @@ class Widgets:
             return self.cfg.setdefault(name, {})
         if m != self.cfg_mtime:
             try:
-                with open(self.config_path, encoding="utf-8") as f:
+                with open(self.config_path, encoding="utf-8-sig") as f:
                     self.cfg = json.load(f)
                 self.cfg_mtime = m
             except (OSError, ValueError):
@@ -103,7 +106,7 @@ class Widgets:
                 sock.disconnectFromServer()
                 return
         try:
-            with open(self.config_path, encoding="utf-8") as f:
+            with open(self.config_path, encoding="utf-8-sig") as f:
                 data = json.load(f)
         except (OSError, ValueError):
             return
@@ -119,6 +122,25 @@ class Widgets:
         os.replace(tmp, self.config_path)
         self.cfg, self.cfg_mtime = data, os.path.getmtime(self.config_path)
 
+    def weather_alert(self):
+        """Новое предупреждение «Погоды» (через N мин дождь / дождь закончится) — один раз, иначе None.
+        Файл пишет виджет «Погода» после каждого обновления; проверяем раз в 30 с."""
+        now = time.monotonic()
+        if now - self.alert_checked < 30:
+            return None
+        self.alert_checked = now
+        try:
+            m = os.path.getmtime(self.alert_path)
+            if m == self.alert_mtime:
+                return None
+            with open(self.alert_path, encoding="utf-8-sig") as f:
+                alert = json.load(f)
+            self.alert_mtime = m
+        except (OSError, ValueError):
+            return None
+        if not alert.get("key") or time.time() - alert.get("updated", 0) > 20 * 60:
+            return None  # пусто или старое (прогноз мог уже сбыться)
+        return alert
 
 
 widgets = Widgets()
