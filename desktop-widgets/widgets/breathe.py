@@ -41,7 +41,7 @@ class BreatheWidget(DesktopWidget):
         self.started = None
         self.timer = QTimer(self, interval=33, timeout=self.tick)
 
-    def click(self, pos):
+    def tap(self, pos):
         if self.started is None:
             self.started = time.time()
             self.timer.start()

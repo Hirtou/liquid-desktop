@@ -59,7 +59,7 @@ class FocusWidget(DesktopWidget):
             config.save()
         self.update()
 
-    def click(self, pos):
+    def tap(self, pos):
         if self.running():
             self.cfg["left"] = self.remaining()
             self.cfg.pop("end", None)

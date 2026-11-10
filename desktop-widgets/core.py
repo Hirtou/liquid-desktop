@@ -886,6 +886,10 @@ class DesktopWidget(QWidget):
         """Клик по своей кнопке внутри виджета (переопределяется). True — клик съеден, окно не тащим."""
         return False
 
+    def tap(self, pos):
+        """Короткий клик без перетаскивания (переопределяется): для виджетов, где кнопка — весь виджет.
+        Зажал и потянул — виджет едет, просто клик — срабатывает tap."""
+
     def double_click(self):
         """Двойной клик по виджету (переопределяется): открыть что-то по теме."""
 
@@ -894,6 +898,7 @@ class DesktopWidget(QWidget):
             if self.click(event.position() / self.scale()):  # кнопки виджета — в его обычных координатах
                 return
             self._drag = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            self._press = (event.globalPosition().toPoint(), event.position() / self.scale())
 
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -927,6 +932,10 @@ class DesktopWidget(QWidget):
     def mouseReleaseEvent(self, event):
         if self._drag is not None:
             self._drag = None
+            start, local = getattr(self, "_press", (None, None))
+            if start is not None and (event.globalPosition().toPoint() - start).manhattanLength() < 5:
+                self.tap(local)  # не тащили — это нажатие
+                return
             self.cfg["x"], self.cfg["y"] = self.x(), self.y()
             config.save()
 
