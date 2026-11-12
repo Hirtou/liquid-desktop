@@ -30,12 +30,23 @@ def _load(path):
         return {}
 
 
+def system_lang():
+    """Язык по умолчанию (в настройках ещё не выбран) — как у Windows: русский для России и соседей, иначе английский."""
+    try:
+        import ctypes
+        primary = ctypes.windll.kernel32.GetUserDefaultUILanguage() & 0x3FF
+    except Exception:
+        return "ru"
+    # ru, uk, be, kk, ky, uz, tg
+    return "ru" if primary in (0x19, 0x22, 0x23, 0x3F, 0x40, 0x43, 0x28) else "en"
+
+
 def _read_lang():
     own = _load(os.path.join(ROOT, "config.json"))
     if own.get("lang"):
         return own["lang"]
     widgets_dir = own.get("widgets_dir") or find_widgets_dir()
-    return _load(os.path.join(widgets_dir, "config.json")).get("app", {}).get("lang", "ru")
+    return _load(os.path.join(widgets_dir, "config.json")).get("app", {}).get("lang") or system_lang()
 
 
 LANG = _read_lang()

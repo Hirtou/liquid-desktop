@@ -101,7 +101,7 @@ Your settings are saved to `config.json` inside each folder. They are personal a
 
 `powershell -ExecutionPolicy Bypass -File tools\make_portable.ps1` (needs Python 3.12 for pip and
 [Inno Setup 6](https://jrsoftware.org/isinfo.php) for the installer: `winget install JRSoftware.InnoSetup`) →
-`build\LiquidDesktop-setup.exe`, `build\LiquidDesktop-portable-win64.zip` and `buildersion.json`
+`build\LiquidDesktop-setup.exe`, `build\LiquidDesktop-portable-win64.zip` and `build\version.json`
 (upload all three to the release — the installed app compares `version.json` to offer updates).
 
 ### License

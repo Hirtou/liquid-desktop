@@ -569,7 +569,7 @@ class WeatherWidget(DesktopWidget):
             open_uri(f"https://openweathermap.org/weathermap?basemap=map&cities=true&layer=temperature&lat={lat:.4f}&lon={lon:.4f}&zoom=10")
         else:
             city = urllib.parse.quote(self.cfg.get("city", tr("Москва")))
-            open_uri(f"https://www.google.com/search?q=%D0%BF%D0%BE%D0%B3%D0%BE%D0%B4%D0%B0+{city}")  # «погода город»
+            open_uri(f"https://www.google.com/search?q={urllib.parse.quote(tr('погода'))}+{city}")  # «погода город»
 
     KEY_HELP = {
         "yandex": tr("Ключ API Яндекс Погоды (берётся в кабинете разработчика:\n"

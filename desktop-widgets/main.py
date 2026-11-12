@@ -476,6 +476,19 @@ class Catalog(DesktopWidget):
         self.under_icons.set_quiet(config.section("app").get("under_icons", False))
         self.under_icons.toggled.connect(self.set_under_icons)
         row.addWidget(self.under_icons)
+        row.addSpacing(10)
+        game_tip = tr("Пока открыта игра или видео на весь экран, виджеты замирают на всех мониторах:\n"
+                      "не рисуют, не снимают стекло и не опрашивают датчики, пинг и плеер.\n"
+                      "Закрыл или свернул игру — сразу оживают со свежими данными.\n"
+                      "Выкл — замирают только виджеты на мониторе с игрой, на втором видны пинг и температура.")
+        game = QLabel(tr("Игровой режим"))
+        game.setToolTip(game_tip)
+        row.addWidget(game)
+        self.game_pause = Switch()
+        self.game_pause.setToolTip(game_tip)
+        self.game_pause.set_quiet(config.section("app").get("game_pause", True))
+        self.game_pause.toggled.connect(self.set_game_pause)
+        row.addWidget(self.game_pause)
         app = config.section("app")
         self.glass_labels = {}
         for key, text, lo, hi, default, unit, tip in (
@@ -649,6 +662,12 @@ class Catalog(DesktopWidget):
         config.save()
         QProcess.startDetached(sys.executable, [os.path.join(ROOT, "main.py"), "--restart"])
         self.quit()
+
+    def set_game_pause(self, on):
+        config.section("app")["game_pause"] = on
+        config.save()
+        for w in activity.widgets():  # прямо во время игры (виджет «поверх окон» на втором мониторе) — сразу
+            w.update()
 
     def set_under_icons(self, on):
         """Режим: под ярлыками (как обои) или обычно (окна на рабочем столе)."""
@@ -947,6 +966,13 @@ def main():
     tray.activated.connect(lambda reason: catalog.open() if reason == QSystemTrayIcon.Trigger else None)
     tray.show()
     catalog.tray = tray
+
+    def on_game(playing):
+        tray.setToolTip(tr("Виджеты — игровой режим: всё на паузе")
+                        if playing and config.section("app").get("game_pause", True) else tr("Виджеты"))
+        print(time.strftime("%Y-%m-%d %H:%M:%S"), "игра на весь экран:", "началась" if playing else "закончилась",
+              file=sys.stderr, flush=True)
+    activity.on_game = on_game
     catalog.updater = updater.Updater(tray, menu, sep, catalog.quit)
 
     # как обычное приложение: при запуске открывается окно; автозапуск с Windows — тихо, в трей

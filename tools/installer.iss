@@ -33,25 +33,19 @@ Compression=lzma2/max
 SolidCompression=yes
 LZMAUseSeparateProcess=yes
 WizardStyle=modern
-ShowLanguageDialog=auto
+ShowLanguageDialog=no
 CloseApplications=yes
 RestartApplications=no
 LicenseFile={#Src}\LICENSE
 
 [Languages]
-Name: "ru"; MessagesFile: "compiler:Languages\Russian.isl"
 Name: "en"; MessagesFile: "compiler:Default.isl"
 
 [CustomMessages]
-ru.Widgets=Виджеты
 en.Widgets=Desktop widgets
-ru.Island=Динамический остров
 en.Island=Dynamic Island
-ru.RunWidgets=Запустить виджеты
 en.RunWidgets=Launch widgets
-ru.RunIsland=Запустить динамический остров
 en.RunIsland=Launch Dynamic Island
-ru.DesktopIcons=Значки на рабочем столе
 en.DesktopIcons=Desktop shortcuts
 
 [Tasks]

@@ -624,7 +624,7 @@ class Island(QWidget):
 
     def wanted_lang(self):
         """Язык острова: свой (настройки острова) или как у виджетов."""
-        return settings.get("lang") or widgets.section("app").get("lang", "ru")
+        return settings.get("lang") or widgets.section("app").get("lang") or lang.system_lang()
 
     def restart(self):
         """Язык читается при запуске (подписи меню собираются тогда же) — сменили язык: перезапуск."""

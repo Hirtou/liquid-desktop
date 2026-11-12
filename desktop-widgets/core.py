@@ -137,6 +137,7 @@ class Activity:
         self.inflight = {}
         self.cover = None  # окно впереди (физ. пиксели), если пользователь в окне
         self.fs_monitor = None  # монитор игры на весь экран
+        self.on_game = None  # началась / закончилась игра на весь экран: on_game(True/False) — подпись в трее
 
     def start(self):
         if self.timer is None:
@@ -258,10 +259,13 @@ class Activity:
         mode = glass.foreground()
         refresh = False
         if mode is not None and mode != self.mode:  # панель задач не меняет режим
+            game = (mode == "fullscreen") != (self.mode == "fullscreen")
             self.mode = mode
             refresh = True
             for w in self.widgets():
                 w.set_rate()
+            if game and self.on_game:
+                self.on_game(mode == "fullscreen")
         if mode == "fullscreen":  # на каком мониторе игра (её могли перетащить — смотрим каждый раз, это дёшево)
             self.fs_monitor = glass.window_rect(glass.user32.GetForegroundWindow())[1]
         # окно впереди: виджеты, которые оно закрывает целиком, анимацию не рисуют (см. covered)
@@ -279,7 +283,10 @@ class Activity:
         if w.on_top() or not w.isVisible():
             return not w.isVisible()
         if self.mode == "fullscreen":
-            # игра закрывает только свой монитор: на втором виджеты видны (температура и пинг во время игры)
+            # игровой режим (по умолчанию): замирает всё, и на других мониторах — ни кадров, ни опросов
+            if config.section("app").get("game_pause", True):
+                return True
+            # выключен: игра закрывает только свой монитор, на втором виджеты живут (температура и пинг во время игры)
             return self.fs_monitor is None or glass.window_rect(int(w.winId()))[1] == self.fs_monitor
         if self.cover is None:
             return False

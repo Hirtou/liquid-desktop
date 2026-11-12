@@ -605,5 +605,9 @@
  "Доступно обновление": "Update available",
  "Нажми, чтобы установить. Настройки и виджеты останутся.": "Click to install. Your settings and widgets stay.",
  "Не удалось скачать обновление": "Couldn't download the update",
- "Проверь интернет и попробуй ещё раз.": "Check your connection and try again."
+ "Проверь интернет и попробуй ещё раз.": "Check your connection and try again.",
+ "погода": "weather",
+ "Игровой режим": "Game mode",
+ "Виджеты — игровой режим: всё на паузе": "Widgets — game mode: everything paused",
+ "Пока открыта игра или видео на весь экран, виджеты замирают на всех мониторах:\nне рисуют, не снимают стекло и не опрашивают датчики, пинг и плеер.\nЗакрыл или свернул игру — сразу оживают со свежими данными.\nВыкл — замирают только виджеты на мониторе с игрой, на втором видны пинг и температура.": "While a game or video is fullscreen, widgets freeze on all monitors:\nno drawing, no glass capture, no polling of sensors, ping or the player.\nClose or minimize the game and they come back right away with fresh data.\nOff — only widgets on the game's monitor freeze; on a second monitor you still see ping and temperatures."
 }
