@@ -39,13 +39,17 @@ Liquid Desktop is two small open-source apps written in Python + PySide6:
 
 ### Quick start — no Python needed
 
-1. Open [**Releases**](https://github.com/Hirtou/liquid-desktop/releases/latest) and download **`LiquidDesktop-portable-win64.zip`** (~100 MB).
+1. Open [**Releases**](https://github.com/Hirtou/liquid-desktop/releases/latest) and download **`LiquidDesktop-setup.exe`** (~65 MB).
    Python 3.12 and all libraries are already inside.
-2. Unpack it anywhere (for example, to the Desktop).
-3. Double-click **`Start widgets.bat`** — the catalog opens. **`Start Dynamic Island.bat`** starts the island.
+2. Run it. No admin rights needed: it installs into your user folder and adds **Liquid Desktop** to the Start menu.
+   If Windows SmartScreen asks, click **More info → Run anyway** (the installer is not signed).
+3. The widget catalog opens right after install. The Dynamic Island is in the Start menu too.
 
-Nothing is installed into Windows: to remove it, quit both apps in the tray and delete the folder.
-If Windows SmartScreen asks, click **More info → Run anyway** (the files are not signed).
+**Updates:** when a new build is out, the widgets' tray menu shows **Install update** — one click, your
+widgets and settings stay. **Uninstall:** Windows Settings → Apps → Liquid Desktop.
+
+Prefer no installer? Download **`LiquidDesktop-portable-win64.zip`** instead, unpack it anywhere and
+double-click **`Start widgets.bat`** / **`Start Dynamic Island.bat`**. To remove it, quit both apps and delete the folder.
 
 ### Run from source (with your own Python)
 
@@ -93,10 +97,12 @@ Your settings are saved to `config.json` inside each folder. They are personal a
 - Widgets and the island hide themselves from screen capture to see what's under the glass; for screenshots
   they show up automatically on PrtSc / Win+Shift+S.
 
-### Building the portable zip
+### Building the installer and the portable zip
 
-`powershell -ExecutionPolicy Bypass -File tools\make_portable.ps1` (needs Python 3.12 for pip) →
-`build\LiquidDesktop-portable-win64.zip`.
+`powershell -ExecutionPolicy Bypass -File tools\make_portable.ps1` (needs Python 3.12 for pip and
+[Inno Setup 6](https://jrsoftware.org/isinfo.php) for the installer: `winget install JRSoftware.InnoSetup`) →
+`build\LiquidDesktop-setup.exe`, `build\LiquidDesktop-portable-win64.zip` and `buildersion.json`
+(upload all three to the release — the installed app compares `version.json` to offer updates).
 
 ### License
 
@@ -119,13 +125,17 @@ Liquid Desktop — две небольшие программы с открыт�
 
 ### Быстрый старт — Python не нужен
 
-1. Открой [**Releases**](https://github.com/Hirtou/liquid-desktop/releases/latest) и скачай **`LiquidDesktop-portable-win64.zip`** (~100 МБ).
+1. Открой [**Releases**](https://github.com/Hirtou/liquid-desktop/releases/latest) и скачай **`LiquidDesktop-setup.exe`** (~65 МБ).
    Python 3.12 и все библиотеки уже внутри.
-2. Распакуй куда удобно (например, на рабочий стол).
-3. Дважды щёлкни **`Start widgets.bat`** — откроется каталог. **`Start Dynamic Island.bat`** запускает остров.
+2. Запусти его. Права администратора не нужны: ставится в папку пользователя, в «Пуске» появится **Liquid Desktop**.
+   Если SmartScreen спросит — **Подробнее → Выполнить в любом случае** (установщик без цифровой подписи).
+3. После установки сразу откроется каталог виджетов. Динамический остров — тоже в «Пуске».
 
-В Windows ничего не устанавливается: чтобы удалить, выйди из обеих программ в трее и удали папку.
-Если SmartScreen спросит — **Подробнее → Выполнить в любом случае** (файлы без цифровой подписи).
+**Обновления:** когда выйдет новая сборка, в меню виджетов в трее появится **«Установить обновление»** — один клик,
+виджеты и настройки останутся. **Удалить:** Параметры Windows → Приложения → Liquid Desktop.
+
+Без установщика: скачай **`LiquidDesktop-portable-win64.zip`**, распакуй куда удобно и дважды щёлкни
+**`Start widgets.bat`** / **`Start Dynamic Island.bat`**. Удалить — выйти из обеих программ и стереть папку.
 
 ### Запуск из исходников (со своим Python)
 

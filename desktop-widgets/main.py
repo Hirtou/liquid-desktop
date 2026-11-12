@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (QAbstractButton, QApplication, QFrame, QGridLayou
 
 import glass
 import icons
+import updater
 import widgets
 from core import RADIUS, ROOT, SHADOW, DesktopWidget, activity, config
 
@@ -940,12 +941,13 @@ def main():
     menu = QMenu()
     menu.addAction(tr("Открыть"), catalog.open)
     catalog.tray_move = menu.addAction(tr("Двигать виджеты"), lambda: catalog.set_editing(not activity.editing))
-    menu.addSeparator()
+    sep = menu.addSeparator()
     menu.addAction(tr("Выход"), catalog.quit)
     tray.setContextMenu(menu)
     tray.activated.connect(lambda reason: catalog.open() if reason == QSystemTrayIcon.Trigger else None)
     tray.show()
     catalog.tray = tray
+    catalog.updater = updater.Updater(tray, menu, sep, catalog.quit)
 
     # как обычное приложение: при запуске открывается окно; автозапуск с Windows — тихо, в трей
     if "--tray" not in sys.argv:

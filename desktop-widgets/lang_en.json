@@ -599,5 +599,11 @@
  "января": "January",
  "ясно": "clear",
  "✓ проверено только что": "✓ checked just now",
- "{} не принял ключ — ": "{} rejected the key — "
+ "{} не принял ключ — ": "{} rejected the key — ",
+ "Установить обновление": "Install update",
+ "Скачивание обновления… {}%": "Downloading update… {}%",
+ "Доступно обновление": "Update available",
+ "Нажми, чтобы установить. Настройки и виджеты останутся.": "Click to install. Your settings and widgets stay.",
+ "Не удалось скачать обновление": "Couldn't download the update",
+ "Проверь интернет и попробуй ещё раз.": "Check your connection and try again."
 }
