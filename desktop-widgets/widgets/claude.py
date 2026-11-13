@@ -839,7 +839,8 @@ class ClaudeWidget(DesktopWidget):
             p.drawText(QRectF(x, r.top() + 90, w, 16), Qt.AlignLeft | Qt.AlignVCenter, tr("пока без дел"))
 
         # ---- счётчики за сегодня: крупная цифра + подпись ----
-        c = self.status.get("counts", {})
+        # показ эмоции (меню, превью в каталоге, картинки) — пример, как у истории действий; иначе — настоящие за сегодня
+        c = {"edit": 24, "run": 17, "read": 41} if self.forced() else self.status.get("counts", {})
         num = QFont("Bahnschrift SemiBold")
         num.setPixelSize(18)
         col_w = w / 3
@@ -850,7 +851,8 @@ class ClaudeWidget(DesktopWidget):
             p.drawText(QRectF(cx, r.bottom() - 46, col_w, 22), Qt.AlignLeft | Qt.AlignVCenter, str(c.get(k, 0)))
             p.setFont(tiny)
             p.setPen(dim)
-            p.drawText(QRectF(cx, r.bottom() - 26, col_w, 14), Qt.AlignLeft | Qt.AlignVCenter, label)
+            p.drawText(QRectF(cx, r.bottom() - 26, col_w, 14), Qt.AlignLeft | Qt.AlignVCenter,
+                       QFontMetricsF(tiny).elidedText(label, Qt.ElideRight, col_w - 4))  # не налезать на соседнюю
 
     def timing(self, state):
         """Сколько идёт задача / за сколько сделал / как давно ждёт."""
