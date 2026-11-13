@@ -10,8 +10,8 @@
 [Setup]
 AppId={{8F3B2C61-4E0A-4B7D-9A55-6C1E2D7F4A10}
 AppName=Liquid Desktop
-AppVersion=0.3 alpha ({#Build})
-AppVerName=Liquid Desktop 0.3 alpha
+AppVersion=0.3.1 alpha ({#Build})
+AppVerName=Liquid Desktop 0.3.1 alpha
 AppPublisher=Hirtou
 AppPublisherURL=https://github.com/Hirtou/liquid-desktop
 AppSupportURL=https://github.com/Hirtou/liquid-desktop/issues
