@@ -12,6 +12,8 @@
 
 [English](#english) · [Русский](#русский)
 
+<img src="screenshots/demo.gif" width="300" alt="Liquid Desktop: glass widgets scrolling, Dynamic Island with music">
+
 <img src="screenshots/widgets_dark_en.png" width="49%"> <img src="screenshots/widgets_light_en.png" width="49%">
 
 <img src="screenshots/island_dark_en.png" width="80%">
