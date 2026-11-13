@@ -44,8 +44,6 @@ Name: "en"; MessagesFile: "compiler:Default.isl"
 [CustomMessages]
 en.Widgets=Desktop widgets
 en.Island=Dynamic Island
-en.RunWidgets=Launch widgets
-en.RunIsland=Launch Dynamic Island
 en.DesktopIcons=Desktop shortcuts
 en.Startup=Start with Windows:
 en.StartWidgets=Desktop widgets
@@ -78,9 +76,9 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "DynamicIsland"; ValueData: """{app}\python\pythonw.exe"" ""{app}\dynamic-island\main.py"""; Tasks: startisland
 
 [Run]
-; обе программы — сразу после установки (галочки на последней странице уже стоят) и после тихого обновления
-Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\desktop-widgets\main.py"""; WorkingDir: "{app}\desktop-widgets"; Description: "{cm:RunWidgets}"; Flags: postinstall nowait
-Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\dynamic-island\main.py"""; WorkingDir: "{app}\dynamic-island"; Description: "{cm:RunIsland}"; Flags: postinstall nowait
+; сразу после установки (и после обновления) — без галочек и вопросов: виджеты с открытым каталогом и остров
+Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\desktop-widgets\main.py"""; WorkingDir: "{app}\desktop-widgets"; Flags: nowait
+Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\dynamic-island\main.py"""; WorkingDir: "{app}\dynamic-island"; Flags: nowait
 
 [UninstallRun]
 Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\desktop-widgets\claude_connect.py"" --disconnect"; Flags: runhidden waituntilterminated; RunOnceId: "ClaudeHooks"
