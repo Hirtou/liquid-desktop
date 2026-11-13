@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (QAbstractButton, QApplication, QFrame, QGridLayou
                                QMenu, QScrollArea, QSlider, QSystemTrayIcon, QVBoxLayout, QWidget)
 
 import glass
+import bugreport
 import icons
 import updater
 import widgets
@@ -960,6 +961,7 @@ def main():
     menu = QMenu()
     menu.addAction(tr("Открыть"), catalog.open)
     catalog.tray_move = menu.addAction(tr("Двигать виджеты"), lambda: catalog.set_editing(not activity.editing))
+    menu.addAction(tr("Сообщить об ошибке"), bugreport.report)
     sep = menu.addSeparator()
     menu.addAction(tr("Выход"), catalog.quit)
     tray.setContextMenu(menu)
