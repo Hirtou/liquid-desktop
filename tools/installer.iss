@@ -47,8 +47,14 @@ en.Island=Dynamic Island
 en.RunWidgets=Launch widgets
 en.RunIsland=Launch Dynamic Island
 en.DesktopIcons=Desktop shortcuts
+en.Startup=Start with Windows:
+en.StartWidgets=Desktop widgets
+en.StartIsland=Dynamic Island
 
 [Tasks]
+; запуск вместе с Windows — галочки уже стоят; запись та же, что ставит сама программа (её переключатель её видит)
+Name: "startwidgets"; Description: "{cm:StartWidgets}"; GroupDescription: "{cm:Startup}"
+Name: "startisland"; Description: "{cm:StartIsland}"; GroupDescription: "{cm:Startup}"
 Name: "desktopicons"; Description: "{cm:DesktopIcons}"; Flags: unchecked
 
 [InstallDelete]
@@ -66,6 +72,10 @@ Name: "{userprograms}\Liquid Desktop\{cm:Widgets}"; Filename: "{app}\python\pyth
 Name: "{userprograms}\Liquid Desktop\{cm:Island}"; Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\dynamic-island\main.py"""; WorkingDir: "{app}\dynamic-island"; IconFilename: "{app}\liquid.ico"
 Name: "{userdesktop}\{cm:Widgets}"; Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\desktop-widgets\main.py"""; WorkingDir: "{app}\desktop-widgets"; IconFilename: "{app}\liquid.ico"; Tasks: desktopicons
 Name: "{userdesktop}\{cm:Island}"; Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\dynamic-island\main.py"""; WorkingDir: "{app}\dynamic-island"; IconFilename: "{app}\liquid.ico"; Tasks: desktopicons
+
+[Registry]
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "DesktopWidgets"; ValueData: """{app}\python\pythonw.exe"" ""{app}\desktop-widgets\main.py"" --tray"; Tasks: startwidgets
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "DynamicIsland"; ValueData: """{app}\python\pythonw.exe"" ""{app}\dynamic-island\main.py"""; Tasks: startisland
 
 [Run]
 ; обе программы — сразу после установки (галочки на последней странице уже стоят) и после тихого обновления
