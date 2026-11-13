@@ -68,8 +68,9 @@ Name: "{userdesktop}\{cm:Widgets}"; Filename: "{app}\python\pythonw.exe"; Parame
 Name: "{userdesktop}\{cm:Island}"; Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\dynamic-island\main.py"""; WorkingDir: "{app}\dynamic-island"; IconFilename: "{app}\liquid.ico"; Tasks: desktopicons
 
 [Run]
+; обе программы — сразу после установки (галочки на последней странице уже стоят) и после тихого обновления
 Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\desktop-widgets\main.py"""; WorkingDir: "{app}\desktop-widgets"; Description: "{cm:RunWidgets}"; Flags: postinstall nowait
-Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\dynamic-island\main.py"""; WorkingDir: "{app}\dynamic-island"; Description: "{cm:RunIsland}"; Flags: postinstall nowait unchecked skipifsilent
+Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\dynamic-island\main.py"""; WorkingDir: "{app}\dynamic-island"; Description: "{cm:RunIsland}"; Flags: postinstall nowait
 
 [UninstallRun]
 Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\desktop-widgets\claude_connect.py"" --disconnect"; Flags: runhidden waituntilterminated; RunOnceId: "ClaudeHooks"
