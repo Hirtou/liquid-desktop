@@ -26,6 +26,7 @@ from PySide6.QtGui import (QColor, QFont, QFontMetricsF, QImage, QLinearGradient
 from PySide6.QtWidgets import QApplication, QMenu, QWidget
 
 import screen
+from bridge import SERVER as WIDGETS_SERVER
 from bridge import (Audio, focus_cfg, focus_left, focus_length, focus_today, settings, timer_cfg, timer_left,
                     widgets)
 from media import Media, YT_MUSIC_URL, accent, glyph, toggle_glyph
@@ -275,10 +276,21 @@ class Island(QWidget):
         return False, 0
 
     def open_settings(self):
-        from settings_window import SettingsWindow
-        if getattr(self, "settings_win", None) is None:
-            self.settings_win = SettingsWindow(self)
-        self.settings_win.open()
+        """Настройки острова — в общем окне виджетов, раздел «Остров».
+        Виджеты не запущены — запустить их сразу на этом разделе."""
+        from PySide6.QtNetwork import QLocalSocket
+        sock = QLocalSocket()
+        sock.connectToServer(WIDGETS_SERVER)
+        if sock.waitForConnected(300):
+            sock.write(b"section island")
+            sock.waitForBytesWritten(300)
+            sock.disconnectFromServer()
+            return
+        main = os.path.join(widgets.dir, "main.py")
+        if os.path.isfile(main):
+            pyw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+            QProcess.startDetached(pyw if os.path.isfile(pyw) else sys.executable, [main, "--section", "island"],
+                                   widgets.dir)
 
     def toggle(self):
         """Горячая клавиша: спрятать остров или вернуть (вернули — коротко «Остров включён»)."""
@@ -634,6 +646,7 @@ class Island(QWidget):
 
     def poll(self):
         now = time.time()
+        settings.reload_if_changed()  # настройки меняют и в окне виджетов (раздел «Остров») — подхватить сразу
         if self.wanted_lang() != lang.LANG:  # язык виджетов поменяли, а остров «как у виджетов»
             self.restart()
             return

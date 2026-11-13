@@ -14,6 +14,7 @@ build/
 
 # Runtime files / Служебные файлы во время работы
 weather_alert.json
+weather_now.json
 claude_status.json
 claude_status.json.lock
 stopped

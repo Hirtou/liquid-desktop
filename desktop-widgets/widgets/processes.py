@@ -2,6 +2,7 @@
 from lang import tr
 import threading
 
+import ctypes
 import psutil
 from PySide6.QtCore import QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter
@@ -12,16 +13,53 @@ from widgets import kit
 COLORS = [QColor(c) for c in ("#60a5fa", "#a78bfa", "#f472b6", "#fbbf24", "#34d399", "#22d3ee")]
 
 
-def top_memory(count):
-    """[(имя, байт)] по убыванию и занятая доля памяти в процентах."""
-    used = {}
+def _all_memory():
+    """[(имя, рабочий набор байт)] всех процессов одним вызовом NtQuerySystemInformation — ~3 мс.
+    psutil.process_iter(memory_info) открывает каждый процесс, к закрытым идёт обходом — ~370 мс на 240 процессов,
+    и всё это время держит GIL: окна программы подвисали, хоть чтение и в своём потоке."""
+    size = 1 << 20
+    while True:
+        buf = ctypes.create_string_buffer(size)
+        need = ctypes.c_ulong()
+        st = ctypes.windll.ntdll.NtQuerySystemInformation(5, buf, size, ctypes.byref(need)) & 0xFFFFFFFF
+        if st == 0:
+            break
+        if st != 0xC0000004 or size > 64 << 20:  # не «мал буфер» — не выйдет
+            raise OSError(st)
+        size = max(size * 2, need.value + 65536)
+    raw, off, out = buf.raw, 0, []
+    while True:  # SYSTEM_PROCESS_INFORMATION, x64: имя — UNICODE_STRING на 0x38, WorkingSetSize на 0x90
+        nxt = int.from_bytes(raw[off:off + 4], "little")
+        ln = int.from_bytes(raw[off + 0x38:off + 0x3A], "little")
+        ptr = int.from_bytes(raw[off + 0x40:off + 0x48], "little")
+        if ptr and ln:
+            out.append((ctypes.wstring_at(ptr, ln // 2), int.from_bytes(raw[off + 0x90:off + 0x98], "little")))
+        if not nxt:
+            return out
+        off += nxt
+
+
+def _all_memory_psutil():
+    out = []
     for proc in psutil.process_iter(["name", "memory_info"]):
         info = proc.info
-        if not info.get("name") or not info.get("memory_info") or info["name"] in ("System Idle Process", "System", "Registry"):
+        if info.get("name") and info.get("memory_info"):
+            out.append((info["name"], info["memory_info"].rss))
+    return out
+
+
+def top_memory(count):
+    """[(имя, байт)] по убыванию и занятая доля памяти в процентах."""
+    try:
+        procs = _all_memory() if ctypes.sizeof(ctypes.c_void_p) == 8 else _all_memory_psutil()
+    except OSError:
+        procs = _all_memory_psutil()
+    used = {}
+    for name, rss in procs:
+        if name in ("System Idle Process", "System", "Registry", "Memory Compression"):
             continue
-        name = info["name"]
         name = name[:-4] if name.lower().endswith(".exe") else name
-        used[name] = used.get(name, 0) + info["memory_info"].rss
+        used[name] = used.get(name, 0) + rss
     return sorted(used.items(), key=lambda kv: kv[1], reverse=True)[:count], psutil.virtual_memory().percent
 
 

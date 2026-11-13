@@ -21,12 +21,15 @@ import numpy as np
 from PySide6.QtCore import QEasingCurve, QEvent, QPointF, QProcess, QRectF, Qt, QTimer, QVariantAnimation, Signal
 from PySide6.QtGui import QColor, QCursor, QFont, QFontMetricsF, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
-from PySide6.QtWidgets import (QAbstractButton, QApplication, QFrame, QGridLayout, QHBoxLayout, QLabel,
-                               QMenu, QScrollArea, QSlider, QSystemTrayIcon, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QAbstractButton, QApplication, QFrame, QGraphicsOpacityEffect, QGridLayout,
+                               QHBoxLayout, QLabel,
+                               QMenu, QScrollArea, QSlider, QStackedWidget, QSystemTrayIcon, QVBoxLayout,
+                               QWidget)
 
-import glass
 import bugreport
+import glass
 import icons
+import sections
 import updater
 import widgets
 from core import RADIUS, ROOT, SHADOW, DesktopWidget, activity, config
@@ -193,16 +196,71 @@ class Segmented(QWidget):
         fm = QFontMetricsF(self.font())
         self.cell = max(fm.horizontalAdvance(t) for _, t in options) + 26
         self.setFixedSize(int(self.cell * len(options)) + 4, 32)
+        # плашка выбора — капля жидкости: два края на своих пружинах. Передний край убегает быстрее, задний
+        # догоняет — капля вытягивается, сплющивается и с лёгким перелётом собирается на новом месте
+        i = self.index(current)
+        self.edges = [2 + i * self.cell, 2 + (i + 1) * self.cell]   # левый, правый край
+        self.speed = [0.0, 0.0]
+        self.goal = list(self.edges)
+        self.stiff = [520.0, 520.0]
+        self.tick = QTimer(self, interval=8, timeout=self.step)
+        self.last = 0.0
+
+    def index(self, name):
+        return next((i for i, (n, _) in enumerate(self.options) if n == name), 0)
+
+    def move_to(self, name, animate=True):
+        i = self.index(name)
+        goal = [2 + i * self.cell, 2 + (i + 1) * self.cell]
+        if not animate or not self.isVisible():
+            self.edges, self.speed, self.goal = list(goal), [0.0, 0.0], goal
+            self.tick.stop()
+            self.update()
+            return
+        if goal == self.goal:  # уже там (или едет туда) — ничего не начинать
+            return
+        right = goal[0] > self.goal[0]
+        # ведущий край (по ходу движения) — жёсткая пружина, хвост — мягкая: так капля тянется
+        self.stiff = [260.0, 700.0] if right else [700.0, 260.0]
+        self.goal = goal
+        self.last = time.monotonic()
+        if not self.tick.isActive():
+            self.tick.start()
+
+    def step(self):
+        now = time.monotonic()
+        dt = min(1 / 30, now - self.last)
+        self.last = now
+        moving = False
+        for k in (0, 1):
+            w = self.stiff[k] ** 0.5
+            zeta = 0.62  # чуть меньше 1 — с перелётом, «пружинит»
+            # несколько мелких шагов — пружина устойчива при любом dt
+            for _ in range(4):
+                h = dt / 4
+                acc = -self.stiff[k] * (self.edges[k] - self.goal[k]) - 2 * zeta * w * self.speed[k]
+                self.speed[k] += acc * h
+                self.edges[k] += self.speed[k] * h
+            if abs(self.edges[k] - self.goal[k]) > 0.05 or abs(self.speed[k]) > 0.5:
+                moving = True
+        if not moving:
+            self.edges, self.speed = list(self.goal), [0.0, 0.0]
+            self.tick.stop()
+        self.update()
 
     def set_quiet(self, name):
         self.current = name
-        self.update()
+        self.move_to(name, animate=self.isVisible())
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.move_to(self.current, animate=False)
 
     def mouseReleaseEvent(self, event):
         i = int((event.position().x() - 2) // self.cell)
         if 0 <= i < len(self.options) and self.options[i][0] != self.current:
             self.current = self.options[i][0]
-            self.update()
+            self.move_to(self.current)
             self.changed.emit(self.current)
 
     def mouseMoveEvent(self, event):
@@ -220,19 +278,36 @@ class Segmented(QWidget):
         p.setBrush(QColor(255, 255, 255, 25 if dark else 130))
         p.drawRoundedRect(r, r.height() / 2, r.height() / 2)
         mouse = self.mapFromGlobal(QCursor.pos()) if self.underMouse() else None
-        for i, (name, text) in enumerate(self.options):
-            cell = QRectF(2 + i * self.cell, 2, self.cell, r.height() - 4)
-            if name == self.current:
+        full_h = r.height() - 4
+        cells = [QRectF(2 + i * self.cell, 2, self.cell, full_h) for i in range(len(self.options))]
+        for i, cell in enumerate(cells):  # наведение — мягкая подсветка под мышью
+            if mouse is not None and cell.contains(QPointF(mouse)) and self.options[i][0] != self.current:
                 p.setPen(Qt.NoPen)
-                p.setBrush(QColor("#2f6bff"))
+                p.setBrush(QColor(255, 255, 255, 30 if dark else 120))
                 p.drawRoundedRect(cell, cell.height() / 2, cell.height() / 2)
-                p.setPen(QColor("white"))
-            else:
-                if mouse is not None and cell.contains(QPointF(mouse)):
-                    p.setPen(Qt.NoPen)
-                    p.setBrush(QColor(255, 255, 255, 30 if dark else 120))
-                    p.drawRoundedRect(cell, cell.height() / 2, cell.height() / 2)
-                p.setPen(QColor("#f5f6fb" if dark else "#2a2c33"))
+        # капля: вытянулась — сплющивается по высоте (объём сохраняется), чуть светлее в движении
+        left, right = self.edges
+        # у стенки капсулы капля не вылезает, а упирается и сжимается, как жидкость
+        left, right = max(2.0, left), min(self.width() - 2.0, right)
+        if right - left < full_h:
+            left = min(left, self.width() - 2.0 - full_h)
+            right = max(right, left + full_h)
+        width = max(full_h, right - left)
+        stretch = max(0.0, width / self.cell - 1)
+        h = full_h * max(0.72, 1 - 0.22 * stretch)
+        drop = QRectF(left, 2 + (full_h - h) / 2, width, h)
+        path = QPainterPath()
+        path.addRoundedRect(drop, h / 2, h / 2)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor("#2f6bff").lighter(100 + int(min(1.0, stretch) * 18)))
+        p.drawPath(path)
+        # текст: обычный везде, белый — ровно там, где сейчас капля (перетекает с буквы на букву)
+        p.setPen(QColor("#f5f6fb" if dark else "#2a2c33"))
+        for cell, (_, text) in zip(cells, self.options):
+            p.drawText(cell, Qt.AlignCenter, text)
+        p.setClipPath(path)
+        p.setPen(QColor("white"))
+        for cell, (_, text) in zip(cells, self.options):
             p.drawText(cell, Qt.AlignCenter, text)
 
 
@@ -269,6 +344,10 @@ class Preview(QWidget):
         self.pix = None
         self.bg = None
 
+    def ready(self):
+        """Копия виджета уже есть — обновить её дёшево (снимок ~1–2 мс). Нет — создавать дорого (20–350 мс)."""
+        return self.copy is not None
+
     def refresh(self, dark):
         if self.copy is None:
             self.copy = self.cls()
@@ -284,6 +363,8 @@ class Preview(QWidget):
             self.key = (w.width(), w.height(), dark)
             self._build(dark)
         self.pix = w.grab()
+        # куда класть снимок — запоминаем: после release() копии нет, а последний кадр каталог показывает
+        self.dst = QRectF(self.ox * self.s, self.oy * self.s, w.width() * self.s, w.height() * self.s)
         self.update()
 
     def release(self):
@@ -322,9 +403,8 @@ class Preview(QWidget):
         path.addRoundedRect(QRectF(self.rect()), 14, 14)
         p.setClipPath(path)
         p.drawImage(0, 0, self.bg)
-        w = self.copy
-        p.drawPixmap(QRectF(self.ox * self.s, self.oy * self.s, w.width() * self.s, w.height() * self.s),
-                     self.pix, QRectF(self.pix.rect()))
+        if self.pix is not None and getattr(self, "dst", None) is not None:
+            p.drawPixmap(self.dst, self.pix, QRectF(self.pix.rect()))
 
 
 class Card(QFrame):
@@ -398,8 +478,25 @@ class Catalog(DesktopWidget):
         sub.setStyleSheet("font-size: 12px;")
         titles.addWidget(title)
         titles.addWidget(sub)
+        # заголовок и подпись у разделов разной длины — место под них постоянное, по самому длинному:
+        # иначе при переключении разделов вкладки справа от заголовка «убегают»
+        big, small = QFont("Segoe UI Semibold"), QFont("Segoe UI")
+        big.setPixelSize(26)
+        small.setPixelSize(12)
+        names = (tr("Виджеты"), tr("Остров"), tr("Погода"))
+        width = max([QFontMetricsF(big).horizontalAdvance(t) for t in names] +
+                    [QFontMetricsF(small).horizontalAdvance(tr(t)) for t in self.SECTION_SUBS.values()])
+        for w in (title, sub):
+            w.setFixedWidth(int(width) + 12)
         head.addLayout(titles)
+        head.addSpacing(18)
+        # одно приложение — три раздела: виджеты, остров, погода (место — общее для виджетов и острова)
+        self.section_bar = Segmented([("widgets", tr("Виджеты")), ("island", tr("Остров")), ("weather", tr("Погода"))],
+                                     "widgets")
+        self.section_bar.changed.connect(self.show_section)
+        head.addWidget(self.section_bar, alignment=Qt.AlignTop)
         head.addStretch()
+        self.title_label, self.sub_label = title, sub
         # язык — в шапке: в нижней строке настроек ему не хватало места (окно расползалось вширь)
         lang_tip = tr("Язык меняется перезапуском программы (пара секунд).")
         self.lang = Segmented(list(LANGS), LANG)
@@ -437,8 +534,15 @@ class Catalog(DesktopWidget):
         avail = (self.screen() or QApplication.primaryScreen()).availableGeometry().height()
         self.scroll.setFixedHeight(min(rows * 208 - 12, avail - 320))
         self.scroll.setFixedWidth(COLUMNS * 256 - 12 + 6 + 10)
-        self.scroll.verticalScrollBar().valueChanged.connect(lambda _: self.refresh_previews())
-        lay.addWidget(self.scroll)
+        # крутят колёсико — превью не трогаем; догоняют, когда прокрутка остановилась
+        self.scroll_rest = QTimer(self, singleShot=True, interval=150, timeout=self.refresh_previews)
+        self.scroll.verticalScrollBar().valueChanged.connect(lambda _: self.scroll_rest.start())
+        page = QWidget()
+        page.setAttribute(Qt.WA_TranslucentBackground)
+        page_lay = QVBoxLayout(page)
+        page_lay.setContentsMargins(0, 0, 0, 0)
+        page_lay.setSpacing(14)
+        page_lay.addWidget(self.scroll)
 
         # настройки приложения
         bar = QFrame(objectName="card")
@@ -547,7 +651,21 @@ class Catalog(DesktopWidget):
         quit_btn = PillButton(tr("Выйти из программы"))
         quit_btn.clicked.connect(self.quit)
         row.addWidget(quit_btn)
-        lay.addWidget(bar)
+        page_lay.addWidget(bar)
+        self.stack = QStackedWidget()
+        self.stack.setAttribute(Qt.WA_TranslucentBackground)
+        self.stack.addWidget(page)
+        self.pages = {"widgets": page}
+        for name, sec in (("island", sections.IslandPage(Switch, Segmented)),
+                          ("weather", sections.WeatherPage(Switch, Segmented, PillButton))):
+            holder = QScrollArea(widgetResizable=True, frameShape=QFrame.NoFrame)
+            holder.setWidget(sec)
+            holder.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            holder.setStyleSheet(SCROLL_STYLE)
+            holder.viewport().setAutoFillBackground(False)
+            self.stack.addWidget(holder)
+            self.pages[name] = holder
+        lay.addWidget(self.stack)
         self.tray = None
         self.tray_move = None
         self.told_tray = False
@@ -560,12 +678,124 @@ class Catalog(DesktopWidget):
 
         # превью обновляются раз в секунду, только пока каталог открыт
         self.preview_timer = QTimer(self, interval=1000, timeout=self.refresh_previews)
+        self.shadow_ready.connect(self.on_shadow)
+        # тема задана — оформление на все сотни элементов окна (~240 мс) сейчас, пока окно скрыто,
+        # а не рывком при первом открытии
+        if self.cfg.get("theme") in ("dark", "light"):
+            self.set_dark(self.cfg["theme"] == "dark")
+        self.build_queue = []
+        self.build_timer = QTimer(self, interval=16, timeout=self.build_next)
+
+    shadow_ready = Signal(object, object)
+
+    def make_shadow(self, card, dark):
+        """Тень под окном каталога — ~350 мс (окно большое): считаем в фоне, пока — прежняя или без неё."""
+        want = (card.width(), card.height(), bool(dark))
+        if getattr(self, "_shadow_want", None) == want:
+            return
+        self._shadow_want = want
+
+        def work():
+            img = glass.render_shadow(want[0], want[1], RADIUS, SHADOW, want[2])
+            try:
+                self.shadow_ready.emit(want, img)
+            except RuntimeError:  # окно уже закрыли
+                pass
+        threading.Thread(target=work, daemon=True).start()
+
+    def on_shadow(self, want, img):
+        if want == getattr(self, "_shadow_want", None):
+            self.shadow_img = img
+            self.update()
+
+    def rebuild_now(self):
+        """Каталог большой: стекло под ним — ~80 мс (у виджета ~12). Считать его на каждом движении мыши
+        в главном потоке — окно едет рывками. Пока тащат — в фоне, заказы склеиваются; окно едет плавно."""
+        self.rebuild()
+
+    SECTION_SUBS = {
+        "widgets": "Liquid Acrylic · виджет таскается мышью, правый клик по нему — меню",
+        "island": "Динамический остров вверху экрана: вид, стекло и что на нём показывать",
+        "weather": "Место и сайт погоды — для виджетов «Погода», «Метеочасы» и «Солнце»",
+    }
+
+    def show_section(self, name):
+        """Раздел окна: «Виджеты» (каталог), «Остров», «Погода»."""
+        if name not in self.pages:
+            return
+        self.section_bar.set_quiet(name)
+        old, new = self.stack.currentWidget(), self.pages[name]
+        self.title_label.setText({"widgets": tr("Виджеты"), "island": tr("Остров"), "weather": tr("Погода")}[name])
+        self.sub_label.setText(tr(self.SECTION_SUBS[name]))
+        if new is not old:
+            order = list(self.pages.values())
+            self.stack.setCurrentWidget(new)
+            if self.isVisible():
+                self.slide_in(new, 1 if order.index(new) > order.index(old) else -1)
+            for w in (self.title_label, self.sub_label):  # заголовок тоже приезжает вместе со страницей
+                if self.isVisible():
+                    self.slide_in(w, 1 if order.index(new) > order.index(old) else -1, 18, 260)
+        if name == "widgets":
+            self.refresh_previews()
+
+    def slide_in(self, w, direction, shift=40, ms=340):
+        """Страница въезжает со стороны выбранного раздела и проявляется — вслед за каплей переключателя."""
+        prev = getattr(w, "_slide", None)
+        if prev is not None:
+            prev.stop()
+            prev.finished.emit()
+        eff = QGraphicsOpacityEffect(w)
+        w.setGraphicsEffect(eff)
+        base = w.pos()
+        anim = QVariantAnimation(self, startValue=0.0, endValue=1.0, duration=ms, easingCurve=QEasingCurve.OutCubic)
+
+        def frame(t):
+            eff.setOpacity(min(1.0, t * 1.4))
+            w.move(base.x() + round(shift * direction * (1 - t)), base.y())
+
+        def done():
+            w._slide = None
+            w.setGraphicsEffect(None)
+            w.move(base)
+        anim.valueChanged.connect(frame)
+        anim.finished.connect(done)
+        w._slide = anim
+        frame(0.0)
+        anim.start()
+
+    def mouseReleaseEvent(self, event):
+        was = self._drag is not None
+        super().mouseReleaseEvent(event)
+        if was:
+            self.rebuild()  # отпустили — свежее стекло на новом месте
 
     def refresh_previews(self):
-        # только карточки, которые сейчас видно в прокрутке — остальные не рисуем зря
+        if self._drag is not None:  # тащат окно — превью подождут, иначе секундные рывки
+            return
+        if self.scroll_rest.isActive():
+            return
+        # только карточки, которые сейчас видно в прокрутке — остальные не рисуем зря.
+        # Готовые — обновить сразу (дёшево); новые — в очередь, по одной между кадрами (иначе зависание на секунды)
+        self.build_queue = []
         for card in self.cards.values():
-            if not card.visibleRegion().isEmpty():
+            if card.visibleRegion().isEmpty():
+                continue
+            if card.preview.ready():
                 card.preview.refresh(bool(self.dark))
+            else:
+                self.build_queue.append(card)
+        if self.build_queue and not self.build_timer.isActive():
+            self.build_timer.start()
+
+    def build_next(self):
+        """Одно новое превью за раз; окно между ними успевает отрисоваться и ответить мыши."""
+        while self.build_queue:
+            card = self.build_queue.pop(0)
+            if self.isVisible() and not self.isMinimized() and self._drag is None                     and not card.visibleRegion().isEmpty() and not card.preview.ready():
+                card.preview.refresh(bool(self.dark))
+                break
+        if not self.build_queue:
+            self.build_timer.stop()
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -614,6 +844,32 @@ class Catalog(DesktopWidget):
     def apply_flags(self):
         # главное окно приложения: есть на панели задач, сворачивается; рамку рисуем сами
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window | Qt.WindowMinimizeButtonHint)
+
+    # окно настроек — сплошное, без акрила (пользователь: «убери акрил в этих настройках»): не снимает экран,
+    # не прячется от скриншотов и не зависит от того, что за ним (чёрные обои давали чёрное окно)
+    def flat_mode(self):
+        return True
+
+    def update_flat(self):
+        card = self.card()
+        theme = self.cfg.get("theme", "auto")
+        dark = self.auto_dark() if theme == "auto" else theme == "dark"
+        if self.flat_key != (card.size(), dark, "solid"):
+            self.flat_key = (card.size(), dark, "solid")
+            self.glass_img = glass.render_flat(card.width(), card.height(), RADIUS, dark, 100)
+            self.shadow_img = glass.render_shadow(card.width(), card.height(), RADIUS, SHADOW, dark)
+            self.set_dark(dark)
+            self.update()
+
+    @staticmethod
+    def auto_dark():
+        """Тема «Авто» у окна: как у Windows (тёмный режим приложений)."""
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize") as k:
+                return not winreg.QueryValueEx(k, "AppsUseLightTheme")[0]
+        except OSError:
+            return True
 
     def open(self):
         if "x" not in self.cfg:  # первый раз — по центру экрана
@@ -825,18 +1081,18 @@ ISLAND_SERVER = "DynamicIsland-Fluid"
 
 
 def island_launch():
-    """Как запускать динамический остров — из его же записи автозапуска: (pythonw, main.py) или None.
+    """Как запускать динамический остров — из его же записи автозапуска: (pythonw, main.py) или строка — почему не запускать.
     Записи нет — автозапуск острова выключен; есть файл «stopped» рядом — остров закрыли через «Выход»."""
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
             cmd = winreg.QueryValueEx(k, "DynamicIsland")[0]
     except OSError:
-        return None
+        return "нет записи автозапуска острова"
     parts = [p.strip('"') for p in cmd.split('" "')]
     if len(parts) < 2 or not os.path.isfile(parts[0]) or not os.path.isfile(parts[1]):
-        return None
+        return "в записи автозапуска не найден файл: " + cmd
     if os.path.exists(os.path.join(os.path.dirname(parts[1]), "stopped")):
-        return None
+        return "остров закрыт через «Выход» (файл stopped)"
     return parts[0], parts[1]
 
 
@@ -853,12 +1109,24 @@ def watch_island(app):
     и после падения он тоже не вернётся сам. Виджеты стартуют надёжно — они и поднимают остров. Два промаха подряд
     (минута), чтобы не влезть в перезапуск острова при смене языка."""
     misses = [0]
+    last = [None]
+
+    def note(state):
+        if state != last[0]:  # в журнал — только смена состояния, без спама раз в 30 с
+            last[0] = state
+            print(time.strftime("%Y-%m-%d %H:%M:%S"), "сторож острова:", state, file=sys.stderr, flush=True)
 
     def check():
         launch = island_launch()
-        if launch is None or island_alive():
+        if isinstance(launch, str):
+            note("не поднимаю: " + launch)
             misses[0] = 0
             return
+        if island_alive():
+            note("остров работает")
+            misses[0] = 0
+            return
+        note("остров не отвечает")
         misses[0] += 1
         if misses[0] >= 2:
             misses[0] = 0
@@ -947,12 +1215,16 @@ def main():
             apply_cfg(cmd[4:])
         elif cmd in ("edit", "pin"):
             catalog.set_editing(cmd == "edit")
+        elif cmd.startswith("section "):  # остров: «Настройки…» — открыть общее окно на его разделе
+            catalog.open()
+            catalog.show_section(cmd.split(" ", 1)[1])
         else:
             catalog.open()
 
     server.newConnection.connect(on_connection)
     server.listen(SERVER)
     watch_island(app)
+
     if "--cmd" in sys.argv and sys.argv[sys.argv.index("--cmd") + 1] == "edit":
         QTimer.singleShot(1500, lambda: catalog.set_editing(True))  # перезапуск в режиме «Двигать»
 
@@ -968,6 +1240,7 @@ def main():
     tray.activated.connect(lambda reason: catalog.open() if reason == QSystemTrayIcon.Trigger else None)
     tray.show()
     catalog.tray = tray
+    catalog.updater = updater.Updater(tray, menu, sep, catalog.quit)
 
     def on_game(playing):
         tray.setToolTip(tr("Виджеты — игровой режим: всё на паузе")
@@ -975,11 +1248,12 @@ def main():
         print(time.strftime("%Y-%m-%d %H:%M:%S"), "игра на весь экран:", "началась" if playing else "закончилась",
               file=sys.stderr, flush=True)
     activity.on_game = on_game
-    catalog.updater = updater.Updater(tray, menu, sep, catalog.quit)
 
     # как обычное приложение: при запуске открывается окно; автозапуск с Windows — тихо, в трей
     if "--tray" not in sys.argv:
         catalog.open()
+    if "--section" in sys.argv[:-1]:  # остров открывает свои настройки, а виджеты ещё не были запущены
+        catalog.show_section(sys.argv[sys.argv.index("--section") + 1])
     sys.exit(app.exec())
 
 

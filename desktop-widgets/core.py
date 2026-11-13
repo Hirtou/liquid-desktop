@@ -761,9 +761,13 @@ class DesktopWidget(QWidget):
             card = self.card()
             if dark != self.dark or self.shadow_img is None or \
                     self.shadow_img.size() != card.size() + QSize(2 * SHADOW, 2 * SHADOW):
-                self.shadow_img = glass.render_shadow(card.width(), card.height(), RADIUS, SHADOW, dark)
+                self.make_shadow(card, dark)
             self.set_dark(dark)
             self.update()
+
+    def make_shadow(self, card, dark):
+        """Тень под карточкой (переопределяется: большому окну — в фоне)."""
+        self.shadow_img = glass.render_shadow(card.width(), card.height(), RADIUS, SHADOW, dark)
 
     def set_rate(self):
         """Как часто смотреть под стекло — по тому, чем занят пользователь:

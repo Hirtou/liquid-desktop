@@ -38,11 +38,34 @@ class Settings:
         return self.data.get(key, default)
 
     def set(self, key, value):
+        self.reload_if_changed()  # раздел «Остров» в окне виджетов мог только что поменять файл — не затереть
         self.data[key] = value
         tmp = self.path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(self.data, f, ensure_ascii=False, indent=1)
         os.replace(tmp, self.path)
+        self.mtime = self._mtime()
+
+    def _mtime(self):
+        try:
+            return os.path.getmtime(self.path)
+        except OSError:
+            return None
+
+    def reload_if_changed(self):
+        """Файл поменяли снаружи (раздел «Остров» в окне виджетов) — перечитать. -> поменялся ли."""
+        m = self._mtime()
+        if m is None or m == getattr(self, "mtime", None):
+            return False
+        try:
+            with open(self.path, encoding="utf-8-sig") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            return False  # как раз пишут — в следующий раз
+        if not isinstance(data, dict):
+            return False
+        self.data, self.mtime = data, m
+        return True
 
 
 settings = Settings()

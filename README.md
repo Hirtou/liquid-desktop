@@ -67,7 +67,8 @@ double-click **`Start widgets.bat`** / **`Start Dynamic Island.bat`**. To remove
    Turn widgets on with the switches on the cards. Drag a widget with the mouse; right-click it for its menu.
 3. **Dynamic Island:** open the `dynamic-island` folder and double-click **`run.bat`**.
    The island lives at the top center of the main screen and shows up when music plays or a timer runs.
-   Hover it to expand. Its settings: **tray icon → Settings…** or **right-click the island → Settings…**
+   Hover it to expand. Its settings: **tray icon → Settings…** or **right-click the island → Settings…** —
+   they open the widgets window on the **Island** tab.
 4. Both apps keep running in the **system tray** (near the clock). Closing a window doesn't quit the app —
    use **Quit** in the tray menu.
 
@@ -79,8 +80,10 @@ If the island has **Start with Windows** on, the widgets also bring it back when
 
 | What | Where |
 |---|---|
-| Turn widgets on/off, glass settings, theme | Widgets catalog (tray icon → **Open**) |
-| Language (English / Русский) | Catalog header (top right). Island: Settings → **Language** |
+| Turn widgets on/off, glass settings, theme | Widgets window, **Widgets** tab (tray icon → **Open**) |
+| Island: look, glass, language | Widgets window, **Island** tab |
+| City / village and weather site | Widgets window, **Weather** tab (search by name) |
+| Language (English / Русский) | Window header (top right). Island: **Island** tab → **Language** |
 | Start with Windows | Catalog → **Start with Windows**; island: tray menu |
 | Move widgets when they are under desktop icons | Catalog → **Move widgets**, then **Done** |
 | Settings of one widget (size, layout, city…) | Right-click the widget |
@@ -155,7 +158,8 @@ Liquid Desktop — две небольшие программы с открыт�
    Включай виджеты переключателями на карточках. Виджет таскается мышью, правый клик по нему — меню.
 3. **Динамический остров:** открой папку `dynamic-island` и дважды щёлкни **`run.bat`**.
    Остров живёт вверху по центру главного экрана и появляется, когда играет музыка или идёт таймер.
-   Наведи мышь — раскроется. Настройки: **значок в трее → Настройки…** или **правый клик по острову → Настройки…**
+   Наведи мышь — раскроется. Настройки: **значок в трее → Настройки…** или **правый клик по острову → Настройки…** —
+   открывают окно виджетов на вкладке **Остров**.
 4. Обе программы работают в **трее** (у часов). Закрытое окно не выключает программу —
    выйти можно через **Выход** в меню значка.
 
@@ -167,8 +171,10 @@ Liquid Desktop — две небольшие программы с открыт�
 
 | Что | Где |
 |---|---|
-| Включить/выключить виджеты, стекло, тема | Каталог виджетов (значок в трее → **Открыть**) |
-| Язык (English / Русский) | Шапка каталога (справа вверху). Остров: Настройки → **Язык** |
+| Включить/выключить виджеты, стекло, тема | Окно виджетов, вкладка **Виджеты** (значок в трее → **Открыть**) |
+| Остров: вид, стекло, язык | Окно виджетов, вкладка **Остров** |
+| Город или село и сайт погоды | Окно виджетов, вкладка **Погода** (поиск по названию) |
+| Язык (English / Русский) | Шапка окна (справа вверху). Остров: вкладка **Остров** → **Язык** |
 | Запуск вместе с Windows | Каталог → **Запускать с Windows**; остров — меню значка в трее |
 | Подвинуть виджеты, когда они под ярлыками | Каталог → **Двигать виджеты**, потом **Готово** |
 | Настройки одного виджета (размер, вид, город…) | Правый клик по виджету |

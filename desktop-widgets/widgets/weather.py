@@ -485,6 +485,46 @@ def weather_alert(data, now=None):
     return None
 
 
+NOW_FILE = os.path.join(ROOT, "weather_now.json")  # сводка: «сейчас» для раздела «Погода» в окне настроек
+
+
+def save_now(data, now):
+    """Сводка для острова: сейчас, мин/макс сегодня, следующие 5 часов. Остров берёт её, пока ей меньше 2 часов."""
+    d, h = data.get("daily") or {}, data.get("hourly") or {}
+    bias = (data.get("station") or {}).get("bias", 0.0) if "fixed" not in data else 0.0
+    cur = data.get("current") or {}
+    feels = (data.get("fixed") or {}).get("feels")
+    if feels is None and cur.get("apparent_temperature") is not None:
+        feels = cur["apparent_temperature"] + bias
+    hours = []
+    times = h.get("time") or []
+    now_key = datetime.now().strftime("%Y-%m-%dT%H:00")
+    start = next((i for i, t in enumerate(times) if t >= now_key), None)
+    if start is not None:
+        pops = h.get("precipitation_probability") or [None] * len(times)
+        days = h.get("is_day") or [1] * len(times)
+        for i in range(start + 1, min(start + 6, len(times))):
+            hours.append({"t": times[i][11:16], "code": h["weather_code"][i], "day": days[i],
+                          "temp": round(h["temperature_2m"][i] + bias), "pop": pops[i]})
+
+    def first(name):
+        v = d.get(name)
+        return v[0] if v else None
+    snap = {"updated": time.time(), "city": data.get("name", ""), "lat": data.get("latitude"),
+            "lon": data.get("longitude"), "temp": round(now["temp"]), "code": now["code"],
+            "is_day": now.get("is_day", 1), "text": now["text"], "feels": None if feels is None else round(feels),
+            "hi": None if first("temperature_2m_max") is None else round(first("temperature_2m_max")),
+            "lo": None if first("temperature_2m_min") is None else round(first("temperature_2m_min")),
+            "rain": first("precipitation_probability_max"), "wind": round(now["wind"]), "hours": hours}
+    try:
+        tmp = NOW_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(snap, f, ensure_ascii=False)
+        os.replace(tmp, NOW_FILE)
+    except OSError:
+        pass
+
+
 def save_alert(alert):
     try:
         tmp = ALERT + ".tmp"
@@ -674,6 +714,10 @@ class WeatherWidget(DesktopWidget):
         try:
             save_alert(weather_alert(data))
         except (KeyError, TypeError, ValueError):
+            pass
+        try:
+            save_now(data, now)
+        except (KeyError, TypeError, ValueError, IndexError):
             pass
         self.city.setText(data["name"])
         self.icon.setPixmap(icons.pixmap(icons.weather_kind(now["code"], now["is_day"]), 52))
