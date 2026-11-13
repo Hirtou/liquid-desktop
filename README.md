@@ -18,6 +18,10 @@
 
 <img src="screenshots/island_dark_en.png" width="80%">
 
+<img src="screenshots/settings_en.png" width="100%" alt="One settings window: Widgets, Island and Weather tabs">
+
+<img src="screenshots/claude_en.png" width="80%" alt="Claude widget: what Claude Code is doing right now">
+
 </div>
 
 > [!WARNING]
@@ -40,6 +44,12 @@ Liquid Desktop is two small open-source apps written in Python + PySide6:
 - **Dynamic Island** (`dynamic-island`) — a glass capsule at the top of the main screen. It appears only when
   something is going on: music (with ⏮ ⏯ ⏭ right in the capsule), a timer, a pomodoro, rain or snow coming soon,
   volume changes, "copied", Caps Lock, audio device switch. Hover it to expand into a card with controls.
+- **One settings window** — the widgets window has three tabs: **Widgets** (turn widgets on and off, glass,
+  theme), **Island** (look, glass and language of the island) and **Weather** (find your city or village by name,
+  choose the weather site). The selection flows between the tabs like a drop of liquid.
+- **Small extras** — **Report a bug** in the tray opens a ready-made GitHub issue (version, Windows, the last
+  error; your user name and paths are removed); **Game mode** pauses the widgets while a game or video is full
+  screen; updates install in one click from the tray.
 
 ### Quick start — no Python needed
 
@@ -47,7 +57,8 @@ Liquid Desktop is two small open-source apps written in Python + PySide6:
    Python 3.12 and all libraries are already inside.
 2. Run it. No admin rights needed: it installs into your user folder and adds **Liquid Desktop** to the Start menu.
    If Windows SmartScreen asks, click **More info → Run anyway** (the installer is not signed).
-3. The widget catalog opens right after install. The Dynamic Island is in the Start menu too.
+3. Right after install the widgets window and the Dynamic Island start by themselves — no extra clicks.
+   The **Start with Windows** checkboxes (widgets and island) are ticked by default.
 
 **Updates:** when a new build is out, the widgets' tray menu shows **Install update** — one click, your
 widgets and settings stay. **Uninstall:** Windows Settings → Apps → Liquid Desktop.
@@ -131,6 +142,12 @@ Liquid Desktop — две небольшие программы с открыт�
 - **Динамический остров** (`dynamic-island`) — стеклянная капсула вверху главного экрана. Появляется, только
   когда что-то происходит: музыка (с ⏮ ⏯ ⏭ прямо в капсуле), таймер, помидор, скоро дождь или снег, громкость,
   «скопировано», Caps Lock, смена устройства звука. Наведи мышь — раскроется карточкой с кнопками.
+- **Одно окно настроек** — в окне виджетов три вкладки: **Виджеты** (включить и выключить виджеты, стекло, тема),
+  **Остров** (вид, стекло и язык острова) и **Погода** (найти свой город или село по названию, выбрать сайт погоды).
+  Выбор между вкладками перетекает каплей.
+- **Мелочи** — **«Сообщить об ошибке»** в трее открывает готовый issue на GitHub (версия, Windows, последняя
+  ошибка; имя пользователя и пути убираются); **игровой режим** ставит виджеты на паузу, пока игра или видео на весь
+  экран; обновления ставятся в один клик из трея.
 
 ### Быстрый старт — Python не нужен
 
@@ -138,7 +155,8 @@ Liquid Desktop — две небольшие программы с открыт�
    Python 3.12 и все библиотеки уже внутри.
 2. Запусти его. Права администратора не нужны: ставится в папку пользователя, в «Пуске» появится **Liquid Desktop**.
    Если SmartScreen спросит — **Подробнее → Выполнить в любом случае** (установщик без цифровой подписи).
-3. После установки сразу откроется каталог виджетов. Динамический остров — тоже в «Пуске».
+3. Сразу после установки сами запускаются окно виджетов и динамический остров — ничего нажимать не нужно.
+   Галочки **«Запускать с Windows»** (виджеты и остров) включены по умолчанию.
 
 **Обновления:** когда выйдет новая сборка, в меню виджетов в трее появится **«Установить обновление»** — один клик,
 виджеты и настройки останутся. **Удалить:** Параметры Windows → Приложения → Liquid Desktop.
@@ -204,5 +222,9 @@ Liquid Desktop — две небольшие программы с открыт�
 <img src="screenshots/widgets_dark_ru.png" width="49%"> <img src="screenshots/widgets_light_ru.png" width="49%">
 
 <img src="screenshots/island_dark_ru.png" width="80%">
+
+<img src="screenshots/settings_ru.png" width="100%" alt="Одно окно настроек: вкладки Виджеты, Остров и Погода">
+
+<img src="screenshots/claude_ru.png" width="80%" alt="Виджет «Клод»: чем сейчас занят Claude Code">
 
 </div>
