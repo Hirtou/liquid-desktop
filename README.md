@@ -30,11 +30,13 @@
 
 Liquid Desktop is two small open-source apps written in Python + PySide6:
 
-- **Desktop Widgets** (`desktop-widgets`) — 33 widgets with live acrylic glass inspired by ColorOS 17:
+- **Desktop Widgets** (`desktop-widgets`) — 34 widgets with live acrylic glass inspired by ColorOS 17:
   clock, weather clock, analog clock, weather, air quality, calendar, world clock, sun, moon, progress of the
   day/week/month, countdown, timer, stopwatch, pomodoro, breathing, water, habits, to-do, notes, clipboard,
   calculator, dice, photo, player and lyrics (Spotify and YouTube Music), system, processes, network,
-  GPU (NVIDIA), ping, sound, currency, quick buttons.
+  GPU (NVIDIA), ping, sound, currency, quick buttons, and **Claude** — a pixel pet that shows what
+  Claude Code is doing right now (right click → **Connect to Claude Code** adds hooks to
+  `~/.claude/settings.json`; a backup copy is saved next to it, and uninstalling removes the hooks).
 - **Dynamic Island** (`dynamic-island`) — a glass capsule at the top of the main screen. It appears only when
   something is going on: music (with ⏮ ⏯ ⏭ right in the capsule), a timer, a pomodoro, rain or snow coming soon,
   volume changes, "copied", Caps Lock, audio device switch. Hover it to expand into a card with controls.
@@ -116,11 +118,13 @@ Your settings are saved to `config.json` inside each folder. They are personal a
 
 Liquid Desktop — две небольшие программы с открытым исходным кодом на Python + PySide6:
 
-- **Виджеты** (`desktop-widgets`) — 33 виджета с живым акриловым стеклом в стиле ColorOS 17:
+- **Виджеты** (`desktop-widgets`) — 34 виджета с живым акриловым стеклом в стиле ColorOS 17:
   часы, метеочасы, циферблат, погода, воздух, календарь, мировое время, солнце, луна, прогресс дня/недели/месяца,
   отсчёт, таймер, секундомер, помидор, дыхание, вода, привычки, дела, заметки, буфер, калькулятор, кубик, фото,
   плеер и слова песни (Spotify и YouTube Music), система, процессы, сеть, видеокарта (NVIDIA), пинг, звук,
-  курсы валют, быстрые кнопки.
+  курсы валют, быстрые кнопки и **Клод** — пиксельный зверёк, который показывает, чем сейчас занят
+  Claude Code (правый клик → **Подключить к Claude Code** добавляет хуки в `~/.claude/settings.json`;
+  прежний файл сохраняется копией рядом, при удалении программы хуки убираются).
 - **Динамический остров** (`dynamic-island`) — стеклянная капсула вверху главного экрана. Появляется, только
   когда что-то происходит: музыка (с ⏮ ⏯ ⏭ прямо в капсуле), таймер, помидор, скоро дождь или снег, громкость,
   «скопировано», Caps Lock, смена устройства звука. Наведи мышь — раскроется карточкой с кнопками.

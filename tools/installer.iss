@@ -72,6 +72,7 @@ Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\desktop-widgets\main.
 Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\dynamic-island\main.py"""; WorkingDir: "{app}\dynamic-island"; Description: "{cm:RunIsland}"; Flags: postinstall nowait unchecked skipifsilent
 
 [UninstallRun]
+Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\desktop-widgets\claude_connect.py"" --disconnect"; Flags: runhidden waituntilterminated; RunOnceId: "ClaudeHooks"
 Filename: "powershell.exe"; Parameters: "-NoProfile -Command ""Get-Process pythonw,python -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -like '{app}\*' } | Stop-Process -Force"""; Flags: runhidden; RunOnceId: "StopApps"
 
 [UninstallDelete]

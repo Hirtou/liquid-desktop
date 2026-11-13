@@ -184,7 +184,7 @@ TILES = {
     "calendar": ("#FFFFFF", "#E7EAF0"), "network": ("#8A6CFF", "#5B3FE0"), "photo": ("#FF8A7A", "#E5486B"),
     "timer": ("#FF8F5A", "#F2542D"), "todo": ("#4CD3A5", "#1FA37A"), "worldclock": ("#3EC7E0", "#1F86C9"),
     "sun": ("#FFB547", "#FF7A2F"), "currency": ("#5ED39B", "#22A06B"), "player": ("#2A2D36", "#121318"),
-    "countdown": ("#FF8A5C", "#E5486B"), "water": ("#36D1FF", "#2F6BFF"),
+    "claude": ("#F4EEE6", "#E6DCCF"), "countdown": ("#FF8A5C", "#E5486B"), "water": ("#36D1FF", "#2F6BFF"),
     "gpu": ("#8BD12F", "#4F8A10"), "ping": ("#5AB8FF", "#2C7BEA"), "focus": ("#FF8A7A", "#E5486B"),
     "moon": ("#3B4152", "#1E2230"), "quick": ("#FFC93C", "#F5A623"), "lyrics": ("#2A2D36", "#121318"),
     "progress": ("#FFC93C", "#F2842D"), "stopwatch": ("#FF6B6B", "#D92D4A"), "calc": ("#4B5263", "#262A36"),
@@ -339,6 +339,18 @@ def _tile_glyph(p, name):
         p.setPen(Qt.NoPen)
         p.setBrush(white)
         p.drawPath(path)
+    elif name == "claude":  # пиксельный зверёк
+        p.setPen(Qt.NoPen)
+        cell = 7
+        x0, y0 = 50 - 6 * cell, 50 - 3.5 * cell
+        body = [(c, r) for c in range(2, 10) for r in range(5)] + [(0, 2), (1, 2), (0, 3), (1, 3),
+                (10, 2), (11, 2), (10, 3), (11, 3)] + [(c, r) for c in (2, 4, 7, 9) for r in (5, 6)]
+        p.setBrush(QColor("#D97757"))
+        for c, r in body:
+            p.drawRect(QRectF(x0 + c * cell, y0 + r * cell, cell + 0.4, cell + 0.4))
+        p.setBrush(QColor("#16161a"))
+        for c in (3, 8):
+            p.drawRect(QRectF(x0 + c * cell, y0 + cell, cell, cell))
     elif name == "lyrics":  # строки текста, средняя — зелёная (поётся сейчас)
         p.setPen(Qt.NoPen)
         for y, w, col in ((30, 46, QColor(255, 255, 255, 90)), (46, 60, QColor("#1ED760")),
