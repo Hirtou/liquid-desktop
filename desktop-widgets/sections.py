@@ -27,6 +27,71 @@ def island_dir():
     return None
 
 
+ISLAND_SERVER = "DynamicIsland-Fluid"  # окно-сервер острова (его main.py)
+RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+RUN_NAME = "DynamicIsland"
+
+
+def island_running():
+    from PySide6.QtNetwork import QLocalSocket
+    probe = QLocalSocket()
+    probe.connectToServer(ISLAND_SERVER)
+    alive = probe.waitForConnected(150)
+    probe.abort()
+    return alive
+
+
+def island_autostart(folder):
+    """Остров запускается с Windows (запись Run ведёт в эту папку острова)."""
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
+            cmd = winreg.QueryValueEx(k, RUN_NAME)[0]
+    except OSError:
+        return False
+    return os.path.normcase(os.path.join(folder, "main.py")) in os.path.normcase(cmd)
+
+
+def set_island_program(folder, on):
+    """«Динамический остров» вкл/выкл целиком. Выкл — закрыть, снять автозапуск, сторож виджетов его не поднимает
+    (файл stopped). Вкл — автозапуск обратно и запустить. Остаются только виджеты — или всё вместе."""
+    import subprocess
+    import sys
+    import winreg
+    from PySide6.QtCore import QProcess
+    from PySide6.QtNetwork import QLocalSocket
+    stopped = os.path.join(folder, "stopped")
+    main_py = os.path.join(folder, "main.py")
+    pyw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+    if not os.path.isfile(pyw):
+        pyw = sys.executable
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as k:
+        if on:
+            winreg.SetValueEx(k, RUN_NAME, 0, winreg.REG_SZ, f'"{pyw}" "{main_py}"')
+        elif island_autostart(folder):  # чужую запись (другая копия острова) не трогаем
+            winreg.DeleteValue(k, RUN_NAME)
+    try:  # подстраховка автозапуска — задача Планировщика (есть не у всех): включить/выключить вместе
+        subprocess.run(["schtasks", "/Change", "/TN", RUN_NAME, "/ENABLE" if on else "/DISABLE"],
+                       capture_output=True, timeout=10, creationflags=subprocess.CREATE_NO_WINDOW)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    if on:
+        try:
+            os.remove(stopped)
+        except OSError:
+            pass
+        if not island_running():
+            QProcess.startDetached(pyw, [main_py], folder)
+        return
+    open(stopped, "w").close()  # сторож виджетов не поднимет остров снова
+    sock = QLocalSocket()
+    sock.connectToServer(ISLAND_SERVER)
+    if sock.waitForConnected(300):
+        sock.write(b"quit")
+        sock.waitForBytesWritten(300)
+        sock.disconnectFromServer()
+
+
 class IslandConfig:
     """config.json острова: читаем каждый раз заново (остров тоже пишет в него), пишем целиком и атомарно."""
 
@@ -111,10 +176,19 @@ class IslandPage(QWidget):
         # ---- вид
         card, grid = section_card(tr("Вид"), tr("Всё применяется сразу — остров подхватывает изменения сам."))
         row = 0
+        self.program = Switch()
+        self.program.toggled.connect(self.set_program)
+        self.program_note = QLabel("", objectName="dim")
+        self.program_note.setStyleSheet("font-size: 12px;")
+        self.program_until = 0.0  # пока остров запускается/закрывается — переключатель не дёргаем по опросу
+        row = self.add_row(grid, row, tr("Динамический остров"), self.program,
+                           tr("Выкл — остров закрывается и больше не запускается с Windows: остаются только виджеты.\n"
+                              "Вкл — запускается сейчас и снова с Windows."), self.program_note)
         self.enabled = Switch()
         self.enabled.toggled.connect(lambda on: self.put("enabled", bool(on)))
-        row = self.add_row(grid, row, tr("Остров включён"), self.enabled,
-                           tr("Выкл — остров спрятан (программа работает; включить — тут или в трее острова)."))
+        row = self.add_row(grid, row, tr("Показывать остров"), self.enabled,
+                           tr("Выкл — остров спрятан, программа работает (вернуть — тут, в трее острова или "
+                              "горячей клавишей)."))
         self.font = QSlider(Qt.Horizontal, minimum=80, maximum=140, singleStep=5, pageStep=10)
         self.font.setFixedWidth(220)
         self.font_value = QLabel("", objectName="dim")
@@ -160,9 +234,11 @@ class IslandPage(QWidget):
         self.glass_rows = [self.acrylic, self.theme] + [s for s, _, _ in self.sliders.values()]
         lay.addWidget(card)
 
+        self.shows = {}
+        self.agents_card(lay, Switch)
+
         # ---- горячая клавиша
         card, grid = section_card(tr("Горячая клавиша"))
-        self.shows = {}
         hint = QLabel("", objectName="dim", wordWrap=True)
         hint.setStyleSheet("font-size: 12px;")
         self.hotkey_hint = hint
@@ -182,6 +258,64 @@ class IslandPage(QWidget):
         if extra is not None:
             grid.addWidget(extra, row, 2)
         return row + 1
+
+    def agents_card(self, lay, Switch):
+        """AI-помощники на острове: показывать ли и к кому подключиться (хуки в настройках каждого помощника)."""
+        import agent_connect
+        self.ac = agent_connect
+        self.agent_rows, self.agent_err = {}, {}
+        card, grid = section_card(tr("AI-помощники"), tr("Остров показывает, чем занят помощник: думает, правит файл, "
+                                                          "ждёт твоего ответа. Хук передаёт только это — без текста "
+                                                          "разговора и содержимого файлов."))
+        row = 0
+        sw = Switch()
+        sw.toggled.connect(lambda on: self.put("agents", bool(on)))
+        row = self.add_row(grid, row, tr("Показывать на острове"), sw,
+                           tr("Выкл — помощники на острове не появляются (подключение остаётся)."))
+        self.shows["agents"] = sw
+        for agent in agent_connect.ORDER:
+            s = Switch()
+            note = QLabel("", objectName="dim")
+            note.setStyleSheet("font-size: 12px;")
+            s.toggled.connect(lambda on, a=agent: self.set_agent(a, on))
+            row = self.add_row(grid, row, agent_connect.AGENTS[agent]["title"], s,
+                               tr("Вкл — в настройки помощника добавятся хуки (прежний файл сохранится копией рядом).\n"
+                                  "Выкл — наши хуки убираются, чужие остаются."), note)
+            self.agent_rows[agent] = (s, note)
+        lay.addWidget(card)
+
+    def load_agents(self):
+        for agent, (s, note) in self.agent_rows.items():
+            have = self.ac.installed(agent)
+            on = self.ac.connected(agent)
+            s.set_quiet(on)
+            set_active(s, have or on)
+            if agent in self.agent_err:
+                text = self.agent_err[agent]
+            elif not have:
+                text = tr("не установлен")
+            elif not on:
+                text = ""
+            elif agent == "codex":
+                text = tr("подключён — в Codex один раз подтверди хук командой /hooks")
+            elif agent == "antigravity":
+                text = tr("подключён — с новой задачи (не видно — перезапусти Antigravity)")
+            else:
+                text = tr("подключён")
+            note.setText(text)
+
+    def set_agent(self, agent, on):
+        if self.quiet:
+            return
+        try:
+            if on:
+                self.ac.connect(agent)
+            else:
+                self.ac.disconnect(agent)
+            self.agent_err.pop(agent, None)
+        except (OSError, ValueError):
+            self.agent_err[agent] = tr("не вышло: файл настроек помощника не читается")
+        self.load_agents()
 
     # ---------- данные ----------
 
@@ -220,6 +354,8 @@ class IslandPage(QWidget):
         for w in self.glass_rows:  # «как у виджетов» — своё стекло не поменять
             set_active(w, not follow)
         set_active(self.sliders["fill"][0], not follow and not look["acrylic"])
+        self.load_agents()
+        self.load_program()
         keys = (data.get("hotkey") or "ctrl+alt+i").title()
         self.hotkey_hint.setText(tr("Спрятать / вернуть остров: {}. Сменить сочетание — \"hotkey\" в config.json острова.")
                                  .format(keys))
@@ -228,6 +364,27 @@ class IslandPage(QWidget):
         if self.quiet:
             return
         self.cfg.set(key, value)
+
+    def load_program(self):
+        """Остров работает или запустится с Windows — переключатель «Динамический остров» включён."""
+        if time.monotonic() < self.program_until:
+            return
+        running = island_running()
+        on = running or (island_autostart(self.folder) and not os.path.exists(os.path.join(self.folder, "stopped")))
+        self.program.set_quiet(on)
+        self.program_note.setText("" if on == running else tr("запустится с Windows") if on else "")
+        set_active(self.enabled, on)
+
+    def set_program(self, on):
+        if self.quiet:
+            return
+        try:
+            set_island_program(self.folder, bool(on))
+            self.program_note.setText(tr("запускается…") if on else tr("выключен — остались только виджеты"))
+        except OSError:
+            self.program_note.setText(tr("не вышло: нет доступа к автозапуску"))
+        self.program_until = time.monotonic() + 6  # дать острову запуститься / закрыться
+        set_active(self.enabled, bool(on))
 
     def set_font(self, value):
         value = round(value / 5) * 5

@@ -1,6 +1,7 @@
 """Динамический остров — как «Жидкое облако» в ColorOS 17: капсула из тёмного стекла вверху по центру главного экрана.
 
-Пока ничего не происходит, её нет. Появляется, когда что-то идёт: музыка, таймер, помидор; на пару секунд — громкость, «скопировано», Caps Lock, смена устройства звука.
+Пока ничего не происходит, её нет. Появляется, когда что-то идёт: музыка, таймер, помидор, AI-помощник работает или ждёт
+ответа (Claude Code, Codex, Antigravity); на пару секунд — громкость, «скопировано», Caps Lock, смена устройства звука.
 Наведи мышь (или кликни) — перетекает в карточку с кнопками. Колесо над островом — громкость.
 Сменился трек, таймер дозвенел, помидор готов — раскрывается сама.
 Два дела сразу — второе отделяется каплей справа (клик по ней — поменять местами). В игре на весь экран прячется.
@@ -25,6 +26,7 @@ from PySide6.QtGui import (QColor, QFont, QFontMetricsF, QImage, QLinearGradient
                            QRadialGradient)
 from PySide6.QtWidgets import QApplication, QMenu, QWidget
 
+import agents as ag
 import screen
 from bridge import SERVER as WIDGETS_SERVER
 from bridge import (Audio, focus_cfg, focus_left, focus_length, focus_today, settings, timer_cfg, timer_left,
@@ -65,7 +67,8 @@ TOMATO, BLUE = QColor("#ff6b5a"), QColor("#4c8dff")
 # размер капсулы: (дело, раскрыта) -> (ширина, высота)
 SIZES = {("music", False): (236, H), ("music", True): (384, 156), ("music", "mini"): (372, H),
          ("timer", False): (164, H), ("timer", True): (364, 100),
-         ("focus", False): (172, H), ("focus", True): (364, 100)}
+         ("focus", False): (172, H), ("focus", True): (364, 100),
+         ("agent", False): (236, H), ("agent", True): (392, 108)}
 # короткие сообщения: ширина; не раскрываются
 TOASTS = {"volume": 270, "clip": 300, "caps": 196, "device": 290, "island": 260, "weather": 300}
 HOTKEY_ID = 1
@@ -215,6 +218,9 @@ class Island(QWidget):
         self.focus_prev = None
         self.focus_paused_at = None
         self.focus_ready_until = 0.0
+        self.agents = ag.Agents(widgets.dir)  # AI-помощники: кто что делает (их хуки пишут в папку виджетов)
+        self.agent = (None, None, {})         # (кто, состояние, данные) — кого показываем
+        self.agent_prev = None
         self.peek_kind, self.peek_until = None, 0.0
         self.mini_until = 0.0                 # до когда показывать «сменился трек» (капсула с названием)
         self.hover = False
@@ -658,11 +664,21 @@ class Island(QWidget):
             self.toast = None
         ts = self.timer_state(now)
         fs = self.focus_state(now)
+        self.agent = self.agents.pick(now) if settings.get("agents", True) else (None, None, {})
+        who, cs = self.agent[0], self.agent[1]
+        if (who, cs) != self.agent_prev and cs in ("ask", "done"):  # спрашивает или закончил — раскрыться
+            self.peek("agent", 6 if cs == "ask" else 4)
+            self.ripple(None, YELLOW if cs == "ask" else GREEN)
+        self.agent_prev = (who, cs)
         items = []
         if self.toast:
             items.append((-1, "toast", self.toast["kind"]))
         if ts == "done":
             items.append((0, "timer", ts))
+        if cs == "ask":
+            items.append((1, "agent", cs))
+        if cs == "done":
+            items.append((2, "agent", cs))
         if fs == "ready":
             items.append((2.5, "focus", fs))
         if ts == "run":
@@ -672,6 +688,8 @@ class Island(QWidget):
         m = self.music
         if m and m.get("playing"):
             items.append((4, "music", "play"))
+        if cs and cs not in ("ask", "done"):  # работает
+            items.append((5, "agent", cs))
         if ts == "pause":
             items.append((6, "timer", ts))
         if fs == "pause":
@@ -709,8 +727,9 @@ class Island(QWidget):
         return self.hover or time.monotonic() < self.peek_until
 
     def calling(self):
-        """Дело зовёт (таймер дозвенел, перерыв кончился) — свечение дышит."""
-        return self.state_of("timer") == "done" or self.state_of("focus") == "ready"
+        """Дело зовёт (помощник спрашивает, таймер дозвенел, перерыв кончился) — свечение дышит."""
+        return self.state_of("agent") == "ask" or self.state_of("timer") == "done" \
+            or self.state_of("focus") == "ready"
 
     def view_size(self, view):
         """Размер капсулы под вид; крупнее текст — шире капсула (высота свёрнутой та же)."""
@@ -851,6 +870,8 @@ class Island(QWidget):
             interval = 33
         elif playing:
             interval = 66
+        elif kind == "agent" or self.primary()[1] == "agent":  # значок помощника — со скоростью своих кадров
+            interval = min(250, ag.speed(self.agent[0], self.state_of("agent")))
         else:
             interval = 250
         if self.anim.interval() != interval:
@@ -1005,6 +1026,8 @@ class Island(QWidget):
         elif kind == "music":
             import os
             os.startfile(YT_MUSIC_URL if (self.music or {}).get("source") == "ytmusic" else "spotify:")
+        elif kind == "agent" and self.agent[0]:
+            ag.open_app(self.agent[0])
 
     def press(self, name):
         now = time.time()
@@ -1070,6 +1093,8 @@ class Island(QWidget):
             return RED if self.state_of("timer") == "done" else ORANGE
         if kind == "focus":
             return GREEN if self.state_of("focus") == "break" else TOMATO
+        if kind == "agent":
+            return ag.color(self.agent[0], self.state_of("agent"), FG)
         if kind == "toast" and self.toast:
             return BLUE if self.toast["kind"] in ("clip", "device") else QColor(FG)
         return QColor(FG)
@@ -1642,3 +1667,53 @@ class Island(QWidget):
         elif kind == "focus":
             frac, color = self.focus_look()[2:]
             self.ring(p, c, 10.5, 3, frac, color)
+        elif kind == "agent":
+            ag.icon(p, self.agent[0], self.state_of("agent") or "think", QPointF(c.x(), c.y() + 1), 11, FG)
+
+    # AI-помощник (Claude Code, Codex, Antigravity)
+
+    def draw_agent(self, p, r, big):
+        who, _, s = self.agent
+        st = self.state_of("agent") or "think"
+        if not who:
+            return
+        text = ag.text(st)
+        color = ag.color(who, st, FG)
+        call = st in ("ask", "done", "oops")
+        work = st in ag.WORK and s.get("started") and not s.get("finished")
+        elapsed = mmss(time.time() - s["started"]) if work else ""
+        detail = s.get("detail") or ""
+        if detail == text or st in ("ask", "done", "oops", "greet"):
+            detail = ""  # то же самое второй строкой не повторять
+        if not big:
+            # в капсуле — подробность («Правлю App.tsx»), если она есть: она говорит больше, чем «Правлю…»
+            ag.icon(p, who, st, QPointF(r.left() + 26, r.center().y() + 0.5), 14 if who == "claude" else 17, FG)
+            p.setFont(font(13))
+            p.setPen(color if call else FG)
+            w = r.width() - 52 - (52 if elapsed else 16)
+            p.drawText(QRectF(r.left() + 48, r.top(), w, r.height()), Qt.AlignLeft | Qt.AlignVCenter,
+                       elide(detail if st in ("read", "edit", "run") and detail else text, font(13), w))
+            if elapsed:
+                p.setFont(font(13, "Bahnschrift"))
+                p.setPen(DIM)
+                p.drawText(QRectF(r.right() - 64, r.top(), 50, r.height()), Qt.AlignRight | Qt.AlignVCenter, elapsed)
+            return
+        if who == "claude":  # персонаж целиком — с лупой, листком, терминалом
+            ag.sprite(p, r.left() + 20, r.top() + 42, 4, st)
+        else:
+            ag.icon(p, who, st, QPointF(r.left() + 58, r.top() + 56), 40, FG)
+        x, w = r.left() + 124, r.width() - 124 - 20
+        p.setFont(font(12, "Segoe UI"))
+        p.setPen(DIM)
+        p.drawText(QRectF(x, r.top() + 18, w, 18), Qt.AlignLeft | Qt.AlignVCenter, ag.NAMES.get(who, who))
+        if elapsed:
+            p.setFont(font(13, "Bahnschrift"))
+            p.drawText(QRectF(x, r.top() + 18, w, 18), Qt.AlignRight | Qt.AlignVCenter, elapsed)
+        p.setFont(font(17))
+        p.setPen(color if call else FG)
+        p.drawText(QRectF(x, r.top() + 38, w, 26), Qt.AlignLeft | Qt.AlignVCenter, elide(text, font(17), w))
+        if detail:
+            p.setFont(font(12, "Segoe UI"))
+            p.setPen(DIM)
+            p.drawText(QRectF(x, r.top() + 66, w, 20), Qt.AlignLeft | Qt.AlignVCenter,
+                       elide(detail, font(12, "Segoe UI"), w))

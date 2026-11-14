@@ -125,8 +125,11 @@ def main():
 
             def finish(s=s, parts=parts):
                 parts.append(bytes(s.readAll()))
-                if b"".join(parts).decode(errors="ignore").strip() == "snap":  # показаться снимку экрана на 3 с
+                text = b"".join(parts).decode(errors="ignore").strip()
+                if text == "snap":  # показаться снимку экрана на 3 с
                     island.on_screenshot()
+                elif text == "quit":  # выключили в настройках виджетов («Динамический остров» — выкл)
+                    quit_by_user()
                 parts.clear()
                 s.deleteLater()  # иначе у каждого подключения остаются дескрипторы Windows и память
 
@@ -134,6 +137,13 @@ def main():
             s.disconnected.connect(finish)
             if s.state() != QLocalSocket.ConnectedState:
                 finish()
+    def quit_by_user():
+        try:  # закрыли сами — виджеты не поднимают остров снова, пока его не запустят вручную
+            open(STOPPED, "w").close()
+        except OSError:
+            pass
+        app.quit()
+
     server.newConnection.connect(on_command)
     server.listen(SERVER)
     try:
@@ -157,12 +167,6 @@ def main():
     auto.toggled.connect(set_autostart)
     menu.addAction(auto)
     menu.addSeparator()
-    def quit_by_user():
-        try:  # закрыли сами — виджеты не поднимают остров снова, пока его не запустят вручную
-            open(STOPPED, "w").close()
-        except OSError:
-            pass
-        app.quit()
     menu.addAction(tr("Выход"), quit_by_user)
     menu.aboutToShow.connect(lambda: on.setChecked(settings.get("enabled", True)))  # могли выключить правым кликом
     tray.setContextMenu(menu)

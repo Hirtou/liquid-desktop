@@ -44,6 +44,12 @@ Liquid Desktop is two small open-source apps written in Python + PySide6:
 - **Dynamic Island** (`dynamic-island`) — a glass capsule at the top of the main screen. It appears only when
   something is going on: music (with ⏮ ⏯ ⏭ right in the capsule), a timer, a pomodoro, rain or snow coming soon,
   volume changes, "copied", Caps Lock, audio device switch. Hover it to expand into a card with controls.
+- **AI assistants on the island** — the island shows what **Claude Code**, **Codex** or **Antigravity** is doing:
+  thinking, editing `App.tsx`, running `npm test`, waiting for your answer, done. Turn each one on in the widgets
+  window → **Island** tab → **AI assistants**: it adds hooks to the assistant's own settings
+  (`~/.claude/settings.json`, `~/.codex/hooks.json`, `~/.gemini/config/hooks.json`); the old file is kept as a backup,
+  other hooks are left alone. The hook passes only the state and a file name — no chat text, no file contents.
+  Codex asks you to approve a new hook once: run `/hooks` in Codex.
 - **One settings window** — the widgets window has three tabs: **Widgets** (turn widgets on and off, glass,
   theme), **Island** (look, glass and language of the island) and **Weather** (find your city or village by name,
   choose the weather site). The selection flows between the tabs like a drop of liquid.
@@ -99,6 +105,8 @@ If the island has **Start with Windows** on, the widgets also bring it back when
 | Move widgets when they are under desktop icons | Catalog → **Move widgets**, then **Done** |
 | Settings of one widget (size, layout, city…) | Right-click the widget |
 | Hide / show the island | **Ctrl+Alt+I** (change in `dynamic-island/config.json` → `"hotkey"`) |
+| Turn the island off completely (keep only widgets, e.g. to use another island app) | **Island** tab → **Dynamic Island** switch: it closes and no longer starts with Windows |
+| Claude Code / Codex / Antigravity on the island | **Island** tab → **AI assistants** |
 | Volume | Mouse wheel over the island |
 | Spotify "like" button (optional) | Right-click the Player → sign in (needs your own free Client ID from developer.spotify.com) |
 | Weather source | Right-click Weather → **Weather source**: Open-Meteo (default, no key), MET Norway (yr.no, no key), Yandex Weather or OpenWeatherMap (your own key). If a site doesn't answer, the weather comes from another one |
@@ -142,6 +150,12 @@ Liquid Desktop — две небольшие программы с открыт�
 - **Динамический остров** (`dynamic-island`) — стеклянная капсула вверху главного экрана. Появляется, только
   когда что-то происходит: музыка (с ⏮ ⏯ ⏭ прямо в капсуле), таймер, помидор, скоро дождь или снег, громкость,
   «скопировано», Caps Lock, смена устройства звука. Наведи мышь — раскроется карточкой с кнопками.
+- **AI-помощники на острове** — остров показывает, чем занят **Claude Code**, **Codex** или **Antigravity**:
+  думает, правит `App.tsx`, запускает `npm test`, ждёт твоего ответа, готово. Включается для каждого в окне виджетов →
+  вкладка **Остров** → **AI-помощники**: в настройки помощника добавляются хуки (`~/.claude/settings.json`,
+  `~/.codex/hooks.json`, `~/.gemini/config/hooks.json`); прежний файл сохраняется копией, чужие хуки не трогаются.
+  Хук передаёт только состояние и имя файла — без текста разговора и содержимого файлов.
+  Codex один раз просит подтвердить новый хук: команда `/hooks` в Codex.
 - **Одно окно настроек** — в окне виджетов три вкладки: **Виджеты** (включить и выключить виджеты, стекло, тема),
   **Остров** (вид, стекло и язык острова) и **Погода** (найти свой город или село по названию, выбрать сайт погоды).
   Выбор между вкладками перетекает каплей.
@@ -197,6 +211,8 @@ Liquid Desktop — две небольшие программы с открыт�
 | Подвинуть виджеты, когда они под ярлыками | Каталог → **Двигать виджеты**, потом **Готово** |
 | Настройки одного виджета (размер, вид, город…) | Правый клик по виджету |
 | Спрятать / вернуть остров | **Ctrl+Alt+I** (сменить — `dynamic-island/config.json` → `"hotkey"`) |
+| Выключить остров совсем (оставить только виджеты, например ради другого острова) | Вкладка **Остров** → **Динамический остров**: закрывается и больше не запускается с Windows |
+| Claude Code / Codex / Antigravity на острове | Вкладка **Остров** → **AI-помощники** |
 | Громкость | Колесо мыши над островом |
 | Сердечко «в любимые» Spotify (по желанию) | Правый клик по плееру → войти (нужен свой бесплатный Client ID на developer.spotify.com) |
 | Откуда погода | Правый клик по погоде → **Откуда погода**: Open-Meteo (по умолчанию, без ключа), MET Norway (yr.no, без ключа), Яндекс Погода или OpenWeatherMap (свой ключ). Сайт не ответил — погода берётся с другого |

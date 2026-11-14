@@ -1,9 +1,9 @@
-"""Кубик и монетка: клик — бросок. Когда надо решить и не хочется думать."""
+"""Кубик и монетка: клик — бросок (зажал и потянул — виджет едет). Когда надо решить и не хочется думать."""
 from lang import tr
 import random
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
-from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPen
+from PySide6.QtGui import QColor, QFontMetricsF, QLinearGradient, QPainter, QPen
 
 from core import DesktopWidget, config, grid
 from widgets import kit
@@ -42,10 +42,10 @@ class DiceWidget(DesktopWidget):
         self.value = random.randint(1, 6) if name == "dice" else random.randint(0, 1)
         self.update()
 
-    def click(self, pos):
+    def tap(self, pos):
+        """Короткий клик — бросок. Не click(): тот съедает нажатие, и виджет нельзя перетащить."""
         self.left = FRAMES
         self.spin.start()
-        return True
 
     def step(self):
         self.left -= 1
@@ -68,7 +68,7 @@ class DiceWidget(DesktopWidget):
         r = QRectF(self.card()).adjusted(16, 14, -16, -14)
         fg, dim, track = kit.ink(self)
         coin = self.cfg["mode"] == "coin"
-        side = 72
+        side = min(60, r.height() * 0.45)  # картинка не налезает на крупный результат
         wobble = (self.left % 3 - 1) * 3 if self.left else 0
         box = QRectF(r.right() - side + wobble, r.top(), side, side)
         if coin:
@@ -100,10 +100,13 @@ class DiceWidget(DesktopWidget):
             for cx, cy in PIPS[max(1, min(6, self.value))]:
                 p.drawEllipse(QPointF(box.left() + step * (cx + 1), box.top() + step * (cy + 1)), pip, pip)
             result = str(self.value)
-        kit.text(p, QRectF(r.left(), r.top(), r.width() - side, 20), tr("Монетка") if coin else tr("Кубик"), fg, 15,
-                 "Segoe UI Semibold")
-        kit.text(p, QRectF(r.left(), r.top() + 26, r.width() - side, 32), "…" if self.left else result, fg, 26,
-                 "Bahnschrift SemiBold")
+        kit.text(p, QRectF(r.left(), r.top(), r.width() - side - 6, 20), tr("Монетка") if coin else tr("Кубик"), fg, 15,
+                 "Segoe UI Semibold", elide=True)
+        room = r.width() - side - 6  # «Решка», «Орёл» — до картинки; не влезает — шрифт мельче
+        value, size = "…" if self.left else result, 26
+        while size > 16 and QFontMetricsF(kit.font(size, "Bahnschrift SemiBold")).horizontalAdvance(value) > room:
+            size -= 1
+        kit.text(p, QRectF(r.left(), r.top() + 26, room, 32), value, fg, size, "Bahnschrift SemiBold")
         kit.text(p, QRectF(r.left(), r.top() + 56, r.width() - side, 14), tr("50 на 50") if coin else tr("из 6"), dim, 11)
         names = [(tr("Орёл") if v else tr("Решка")) if coin else str(v) for v in self.history[-4:]]
         kit.text(p, QRectF(r.left(), r.bottom() - 38, r.width(), 18), " · ".join(reversed(names)) if names else tr("ещё не бросали"),

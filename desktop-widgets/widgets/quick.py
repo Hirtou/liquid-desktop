@@ -5,7 +5,7 @@ import ctypes
 import math
 
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
+from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPainterPath, QPen
 
 from core import DesktopWidget, grid, open_uri
 
@@ -62,7 +62,11 @@ class QuickWidget(DesktopWidget):
         col = r.width() / len(BUTTONS)
         side = min(col - 10, 52)
         label = QFont("Segoe UI")
-        label.setPixelSize(11)
+        size = 11  # подписи не налезают друг на друга: самая длинная («Параметры») — в свою колонку
+        label.setPixelSize(size)
+        while size > 7 and max(QFontMetricsF(label).horizontalAdvance(t) for _, t, _ in BUTTONS) > col - 6:
+            size -= 1
+            label.setPixelSize(size)
         self.buttons = {}
         for i, (name, text, color) in enumerate(BUTTONS):
             cx = r.left() + col * i + col / 2
@@ -75,7 +79,8 @@ class QuickWidget(DesktopWidget):
             self._glyph(p, name, tile.center(), side * 0.42)
             p.setFont(label)
             p.setPen(dim)
-            p.drawText(QRectF(cx - col / 2, tile.bottom() + 4, col, 16), Qt.AlignCenter, text)
+            p.drawText(QRectF(cx - col / 2 + 2, tile.bottom() + 4, col - 4, 16), Qt.AlignCenter,
+                       QFontMetricsF(label).elidedText(text, Qt.ElideRight, col - 4))
 
     @staticmethod
     def _glyph(p, name, c, s):
