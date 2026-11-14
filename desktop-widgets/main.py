@@ -23,7 +23,7 @@ from PySide6.QtGui import QColor, QCursor, QFont, QFontMetricsF, QIcon, QPainter
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import (QAbstractButton, QApplication, QFrame, QGraphicsOpacityEffect, QGridLayout,
                                QHBoxLayout, QLabel,
-                               QMenu, QScrollArea, QSlider, QStackedWidget, QSystemTrayIcon, QVBoxLayout,
+                               QMenu, QScrollArea, QSlider, QStackedWidget, QSystemTrayIcon, QToolTip, QVBoxLayout,
                                QWidget)
 
 import bugreport
@@ -134,7 +134,7 @@ class Switch(QAbstractButton):
 
 
 class TitleButton(QAbstractButton):
-    """Круглая стеклянная кнопка окна: ✕ (закрыть) или – (свернуть)."""
+    """Круглая стеклянная кнопка окна: ✕ (закрыть), – (свернуть) или жучок («Сообщить о баге»)."""
 
     def __init__(self, kind="close"):
         super().__init__(cursor=Qt.PointingHandCursor)
@@ -154,6 +154,16 @@ class TitleButton(QAbstractButton):
         c, s = QPointF(16, 16), 4.5
         if self.kind == "min":
             p.drawLine(c + QPointF(-s, 0), c + QPointF(s, 0))
+        elif self.kind == "bug":  # жучок: тельце, голова, усики и по три лапки с боков
+            p.setPen(QPen(p.pen().color(), 1.4, Qt.SolidLine, Qt.RoundCap))
+            p.drawEllipse(QRectF(12.2, 13.2, 7.6, 9.4))
+            p.drawLine(QPointF(16, 13.6), QPointF(16, 22.2))
+            p.drawEllipse(QRectF(14, 9.6, 4, 3.6))
+            p.drawLine(QPointF(14.8, 10), QPointF(13.2, 8))
+            p.drawLine(QPointF(17.2, 10), QPointF(18.8, 8))
+            for y, d in ((15, -1.2), (18, 0), (21, 1.2)):
+                p.drawLine(QPointF(12.2, y), QPointF(9.4, y + d))
+                p.drawLine(QPointF(19.8, y), QPointF(22.6, y + d))
         else:
             p.drawLine(c + QPointF(-s, -s), c + QPointF(s, s))
             p.drawLine(c + QPointF(-s, s), c + QPointF(s, -s))
@@ -518,6 +528,12 @@ class Catalog(DesktopWidget):
         self.lang.changed.connect(self.set_lang)
         head.addWidget(self.lang, alignment=Qt.AlignTop)
         head.addSpacing(8)
+        bug_btn = TitleButton("bug")
+        bug_btn.setToolTip(tr("Сообщить о баге") + "\n" + tr("Откроет наш Telegram-канал, а отчёт (версия, Windows, последняя ошибка — без имени\n"
+                              "и путей) скопирует в буфер: вставь его в чат и допиши, что случилось."))
+        bug_btn.clicked.connect(lambda: self.report_bug(bug_btn))
+        head.addWidget(bug_btn, alignment=Qt.AlignTop)
+        head.addSpacing(6)
         minimize = TitleButton("min")
         minimize.setToolTip(tr("Свернуть"))
         minimize.clicked.connect(self.showMinimized)
@@ -691,7 +707,7 @@ class Catalog(DesktopWidget):
                 self.cards[cls.key].switch.set_quiet(False)
 
         # превью обновляются раз в секунду, только пока каталог открыт
-        self.preview_timer = QTimer(self, interval=1000, timeout=self.refresh_previews)
+        self.preview_timer = QTimer(self, interval=2000, timeout=self.refresh_previews)  # чаще — зря грузит процессор
         self.shadow_ready.connect(self.on_shadow)
         # тема задана — оформление на все сотни элементов окна (~240 мс) сейчас, пока окно скрыто,
         # а не рывком при первом открытии
@@ -902,6 +918,11 @@ class Catalog(DesktopWidget):
         self.update()  # переключатели и ✕ берут тему у окна
         if hasattr(self, "cards") and self.isVisible():
             self.refresh_previews()  # превью — в тон окну
+
+    def report_bug(self, button):
+        bugreport.report_telegram()
+        QToolTip.showText(button.mapToGlobal(button.rect().topLeft()),
+                          tr("Отчёт скопирован — вставь его в чат канала (Ctrl+V)"), button, button.rect(), 5000)
 
     def set_editing(self, on):
         """«Двигать виджеты»: поднять их наверх (обычные окна) или вшить обратно под ярлыки."""

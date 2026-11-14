@@ -5,6 +5,7 @@ import socket
 import threading
 import time
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QLinearGradient, QPainter, QPainterPath, QPen
@@ -14,6 +15,9 @@ from core import DesktopWidget, activity, grid, open_uri
 HOSTS = [("Google", "google.com", 443), ("Cloudflare", "1.1.1.1", 443), ("Steam", "steamcommunity.com", 443)]
 SAMPLES = 30  # по 2 с — минута
 GREEN, AMBER, RED, BLUE = QColor("#4ade80"), QColor("#ffb547"), QColor("#ff5a5f"), QColor("#60a5fa")
+
+
+POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ping")  # один поток на все замеры
 
 
 def measure(host, port, cache={}):
@@ -56,7 +60,7 @@ class PingWidget(DesktopWidget):
     def refresh(self):
         if not self.busy and not activity.paused(self):  # в игре и под окном не шлём соединения: цифр всё равно не видно
             self.busy = True
-            threading.Thread(target=self._measure, daemon=True).start()
+            POOL.submit(self._measure)
 
     def _measure(self):
         result = [measure(h, port) for _, h, port in HOSTS]

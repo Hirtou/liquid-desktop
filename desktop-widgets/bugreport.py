@@ -1,4 +1,6 @@
-"""«Сообщить об ошибке» (меню в трее): открывает в браузере новый issue на GitHub с уже заполненным текстом —
+"""«Сообщить о баге» (кнопка в окне настроек): копирует готовый отчёт в буфер и открывает Telegram-канал проекта —
+человек вставляет текст в чат и дописывает, что случилось.
+«Сообщить об ошибке» (меню в трее): открывает в браузере новый issue на GitHub с уже заполненным текстом —
 версия, Windows, язык, включённые виджеты и последняя ошибка из журналов виджетов и острова.
 Ничего не отправляется само: человек видит текст, дописывает, что случилось, и сам нажимает Submit.
 Из журнала перед вставкой убирается личное: имя пользователя и путь к его папке, имя компьютера, почта."""
@@ -12,6 +14,7 @@ from PySide6.QtCore import QUrl
 from PySide6.QtGui import QDesktopServices
 
 REPO = "Hirtou/liquid-desktop"
+TELEGRAM = "https://t.me/Liquid_Desktop"
 HERE = os.path.dirname(os.path.abspath(__file__))
 PARENT = os.path.dirname(HERE)
 MAX_URL = 7500          # длиннее GitHub и браузеры обрезают
@@ -105,3 +108,23 @@ def build_url(limit=1800):
 
 def report():
     QDesktopServices.openUrl(QUrl(build_url()))
+
+
+def chat_text(limit=1200):
+    """Отчёт для чата: версия, Windows, язык, виджеты на столе и последняя ошибка (без личного)."""
+    from lang import LANG, tr
+    text = (tr("Что случилось:") + "\n\n\n---\n"
+            f"Liquid Desktop {version()} · {windows()} · {LANG}\n"
+            + tr("Виджеты на столе:") + f" {visible_widgets()}\n")
+    for name, path in LOGS:
+        err = last_error(path, limit)
+        if err:
+            text += "\n" + tr("Последняя ошибка ({}):").format(name + ".log") + f"\n{err}\n"
+    return text
+
+
+def report_telegram():
+    """Скопировать отчёт в буфер и открыть канал в Telegram. Ничего не отправляется само."""
+    from PySide6.QtGui import QGuiApplication
+    QGuiApplication.clipboard().setText(chat_text())
+    QDesktopServices.openUrl(QUrl(TELEGRAM))

@@ -688,5 +688,13 @@
  "не вышло: нет доступа к автозапуску": "failed: no access to startup settings",
  "Установить обновление {}": "Install update {}",
  "Вышла новая версия {}": "New version {} is out",
- "Вышла новая версия. Скачается и встанет поверх — виджеты и настройки останутся.": "A new version is out. It downloads and installs over this one — your widgets and settings stay."
+ "Вышла новая версия. Скачается и встанет поверх — виджеты и настройки останутся.": "A new version is out. It downloads and installs over this one — your widgets and settings stay.",
+ "Сообщить о баге": "Report a bug",
+ "Откроет наш Telegram-канал, а отчёт (версия, Windows, последняя ошибка — без имени\nи путей) скопирует в буфер: вставь его в чат и допиши, что случилось.": "Opens our Telegram channel and copies a report (version, Windows, the last error — without your name\nor paths) to the clipboard: paste it into the chat and add what happened.",
+ "Отчёт скопирован — вставь его в чат канала (Ctrl+V)": "Report copied — paste it into the channel chat (Ctrl+V)",
+ "Что случилось:": "What happened:",
+ "Виджеты на столе:": "Widgets on screen:",
+ "Последняя ошибка ({}):": "Last error ({}):",
+ "Обновить до {}": "Update to {}",
+ "Скачиваю… {}%": "Downloading… {}%"
 }

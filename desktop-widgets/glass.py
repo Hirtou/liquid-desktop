@@ -453,10 +453,12 @@ def _crop(arr, x, y, w, h):
 # ---------- математика ----------
 
 def _box(a, r, axis):
-    pad = [(0, 0)] * a.ndim
-    pad[axis] = (r + 1, r)
-    c = np.cumsum(np.pad(a, pad, mode="edge"), axis=axis)
     n = a.shape[axis]
+    # края — копии крайнего ряда (как np.pad mode="edge"), но без np.pad: на маленьких картинках он медленный
+    first = np.take(a, [0], axis=axis)
+    last = np.take(a, [n - 1], axis=axis)
+    c = np.cumsum(np.concatenate([np.repeat(first, r + 1, axis=axis), a, np.repeat(last, r, axis=axis)],
+                                 axis=axis), axis=axis)
     # срезы, а не np.take по списку индексов: то же самое без лишних копий (размытие стало в ~2 раза быстрее)
     hi = [slice(None)] * a.ndim
     lo = [slice(None)] * a.ndim

@@ -194,8 +194,9 @@ class Activity:
                     w.due, w.same = 0.0, 0
             self.cursor, self.moved = pos, now
         idle = now - self.moved > 1.0
-        # сам такт: 30 раз в секунду, пока двигается мышь; в покое хватает 5; в игре на весь экран — 4
-        rate = 250 if self.mode == "fullscreen" else 200 if idle else 33
+        # сам такт: 20 раз в секунду, пока двигается мышь (30 — разницы на размытом стекле не видно, а процессор
+        # заметно занят); в покое хватает 5; в игре на весь экран — 4
+        rate = 250 if self.mode == "fullscreen" else 200 if idle else 50
         if self.timer.interval() != rate:
             self.timer.setInterval(rate)
         groups = {}
@@ -209,7 +210,7 @@ class Activity:
             if w.interval is None or not w.isVisible() or w.isMinimized() \
                     or now < w.due - min(0.2, w.interval * 0.0004):
                 continue
-            win, monitor = glass.window_rect(int(w.winId()))
+            win, monitor = self.win_rect(w, True)
             if self.inflight.get(monitor, 0) >= 1:
                 continue
             # закрыт окном целиком — не видно, снимать незачем. Закрыт частью — снимаем: видимый край
@@ -287,10 +288,20 @@ class Activity:
             if config.section("app").get("game_pause", True):
                 return True
             # выключен: игра закрывает только свой монитор, на втором виджеты живут (температура и пинг во время игры)
-            return self.fs_monitor is None or glass.window_rect(int(w.winId()))[1] == self.fs_monitor
+            return self.fs_monitor is None or self.win_rect(w, True)[1] == self.fs_monitor
         if self.cover is None:
             return False
-        return glass.hides(self.cover, glass.window_rect(int(w.winId()))[0], SHADOW * w.devicePixelRatioF())
+        return glass.hides(self.cover, self.win_rect(w, True)[0], SHADOW * w.devicePixelRatioF())
+
+    def win_rect(self, w, both=False):
+        """Где окно виджета и его монитор (физ. пиксели) — из кэша на 0.5 с: такт (30 раз в секунду, пока двигается
+        мышь) и covered() у анимаций спрашивали это у Windows для каждого окна — три вызова на окно, заметная доля
+        процессора. Виджет двигают — кэш сбрасывает moveEvent. both=False — только окно."""
+        now = time.monotonic()
+        hit = getattr(w, "_rect_cache", None)
+        if hit is None or now - hit[0] > 0.5:
+            hit = w._rect_cache = (now, glass.window_rect(int(w.winId())))
+        return hit[1] if both else hit[1][0]
 
     def paused(self, w):
         """Опрашивать данные незачем: окно видно системе, но его закрыли игрой или окном (откроют — следующий такт
@@ -804,6 +815,7 @@ class DesktopWidget(QWidget):
     def moveEvent(self, event):
         # было два moveEvent — второй перекрывал первый, и подложка Windows не ехала за виджетом
         super().moveEvent(event)
+        self._rect_cache = None  # covered() — снова спросить Windows, где окно
         self.follow_backdrop()
         if self._drag is not None:
             self.rebuild_now()

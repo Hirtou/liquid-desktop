@@ -612,12 +612,12 @@ class ClaudeWidget(DesktopWidget):
 
     def smooth_tick(self):
         """Плавная часть движения: перерисовать только сцену с персонажем.
-        Большие движения — 30 кадров в секунду, дыхание — 15; закрыт окном или игрой — ничего."""
+        Большие движения — 30 кадров в секунду, дыхание — 10; закрыт окном или игрой — ничего."""
         if not self.isVisible() or self.tile is None or activity.covered(self):
             return
         state = self.state()
         now = time.monotonic()
-        want = 33 if state in BIG_MOTION or now - self.shown_at < 0.6 else 66
+        want = 33 if state in BIG_MOTION or now - self.shown_at < 0.6 else 100
         if self.smooth.interval() != want:
             self.smooth.setInterval(want)
         # картинка сдвинулась меньше чем на полпикселя (дыхание медленное) — не перерисовывать:
@@ -678,7 +678,9 @@ class ClaudeWidget(DesktopWidget):
         # кадр анимации меняет только персонажа, его тень и точку в плашке. Всё остальное (плитка, текст, счётчики) —
         # одной картинкой, она пересобирается раз в секунду или при смене состояния
         k, dpr = self.scale(), self.devicePixelRatioF()
-        key = (self.card().size().toTuple(), dark, k, dpr, state, int(time.time()), self.mtime, self.forced())
+        # время в карточке («работаю 3:12», «2 мин» у действий) — в ключе само: пока надписи те же, картинка та же
+        key = (self.card().size().toTuple(), dark, k, dpr, state, self.timing(state), self.ago_key(r), self.mtime,
+               self.forced())
         if key != self._card_key:
             self._card_key = key
             pix = QPixmap(ceil(r.width() * k * dpr), ceil(r.height() * k * dpr))
@@ -760,6 +762,13 @@ class ClaudeWidget(DesktopWidget):
                 self._sprites.pop(next(iter(self._sprites)))
             found = self._sprites[key] = (pix, c0, r0)
         return found
+
+    def ago_key(self, r):
+        """Надписи «сколько назад» у последних действий — как в _card (для ключа кэша карточки)."""
+        lines = 3 if r.height() > 190 else 2
+        hist = (self.status.get("history", []) if not self.forced() else SAMPLE_HISTORY)[:lines]
+        now = time.time()
+        return tuple(ago_text(now - h.get("t", now)) for h in hist)
 
     def _card(self, p, r, tile, state, color, chip, dark):
         """Неподвижная часть карточки: сцена без персонажа и всё, что справа от неё."""

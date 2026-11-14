@@ -88,7 +88,7 @@ class Updater(QObject):
 
     def label(self):
         v = self.version.lstrip("v").replace("-alpha", " alpha")
-        return tr("Установить обновление {}").format(v) if v else tr("Установить обновление")
+        return tr("Обновить до {}").format(v) if v else tr("Установить обновление")
 
     def set_text(self, text):
         self.action.setText(text)
@@ -109,7 +109,9 @@ class Updater(QObject):
                                   tr("Нажми, чтобы установить. Настройки и виджеты останутся."), self.tray.icon(), 10000)
 
     def on_progress(self, p):
-        self.set_text(tr("Скачивание обновления… {}%").format(p))
+        self.action.setText(tr("Скачивание обновления… {}%").format(p))
+        if self.button is not None:
+            self.button.setText(tr("Скачиваю… {}%").format(p))
 
     def install(self):
         if self.busy or not self.url:
