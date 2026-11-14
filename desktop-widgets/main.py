@@ -529,8 +529,7 @@ class Catalog(DesktopWidget):
         head.addWidget(self.lang, alignment=Qt.AlignTop)
         head.addSpacing(8)
         bug_btn = TitleButton("bug")
-        bug_btn.setToolTip(tr("Сообщить о баге") + "\n" + tr("Откроет наш Telegram-канал, а отчёт (версия, Windows, последняя ошибка — без имени\n"
-                              "и путей) скопирует в буфер: вставь его в чат и допиши, что случилось."))
+        bug_btn.setToolTip(tr("Сообщить о баге") + "\n" + tr("Откроет наш Telegram-канал — напиши в комментариях, что случилось."))
         bug_btn.clicked.connect(lambda: self.report_bug(bug_btn))
         head.addWidget(bug_btn, alignment=Qt.AlignTop)
         head.addSpacing(6)
@@ -921,8 +920,6 @@ class Catalog(DesktopWidget):
 
     def report_bug(self, button):
         bugreport.report_telegram()
-        QToolTip.showText(button.mapToGlobal(button.rect().topLeft()),
-                          tr("Отчёт скопирован — вставь его в чат канала (Ctrl+V)"), button, button.rect(), 5000)
 
     def set_editing(self, on):
         """«Двигать виджеты»: поднять их наверх (обычные окна) или вшить обратно под ярлыки."""

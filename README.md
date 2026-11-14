@@ -60,8 +60,8 @@ Liquid Desktop is two small open-source apps written in Python + PySide6:
   theme), **Island** (look, glass and language of the island) and **Weather** (find your city or village by name,
   choose the weather site). The selection flows between the tabs like a drop of liquid.
 - **Found a bug?** Click the **bug** button at the top of the widgets window: it opens our Telegram channel
-  [t.me/Liquid_Desktop](https://t.me/Liquid_Desktop) and copies a ready report (version, Windows, the last error,
-  without your name or paths) — paste it into the chat. News and updates are posted there too.
+  [t.me/Liquid_Desktop](https://t.me/Liquid_Desktop) — write in the comments what happened. News and updates are
+  posted there too.
 - **Small extras** — **Report a bug** in the tray opens a ready-made GitHub issue (version, Windows, the last
   error; your user name and paths are removed); **Game mode** pauses the widgets while a game or video is full
   screen; updates install in one click from the tray.
@@ -169,8 +169,8 @@ Liquid Desktop — две небольшие программы с открыт�
   **Остров** (вид, стекло и язык острова) и **Погода** (найти свой город или село по названию, выбрать сайт погоды).
   Выбор между вкладками перетекает каплей.
 - **Нашёл баг?** Нажми кнопку с **жучком** вверху окна виджетов: откроется наш Telegram-канал
-  [t.me/Liquid_Desktop](https://t.me/Liquid_Desktop), а готовый отчёт (версия, Windows, последняя ошибка — без имени
-  и путей) скопируется в буфер — вставь его в чат. Там же новости и обновления.
+  [t.me/Liquid_Desktop](https://t.me/Liquid_Desktop) — напиши в комментариях, что случилось. Там же новости
+  и обновления.
 - **Мелочи** — **«Сообщить об ошибке»** в трее открывает готовый issue на GitHub (версия, Windows, последняя
   ошибка; имя пользователя и пути убираются); **игровой режим** ставит виджеты на паузу, пока игра или видео на весь
   экран; обновления ставятся в один клик из трея.
