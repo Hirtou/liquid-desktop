@@ -5,16 +5,16 @@ antigravity_status.json (agent_hook.py). Подключают хуки в окн
 Остров показывает одного — самого важного: спрашивает > только что закончил (8 с) > ошибка > работает;
 при равенстве — тот, кто менялся последним.
 
-Значки свои: Claude — пиксельный персонаж (как в виджете «Клод»), Codex — окно терминала, Antigravity — орбита.
+Персонажи пиксельные, в одном стиле (claude_sprite.py): Claude — как в виджете «Клод», Codex — терминальчик
+с курсором-ртом «_», Antigravity — парящая планетка с кольцом. Анимации и реквизит по состояниям у всех общие.
 
 AI coding agents on the island: reads <agent>_status.json written by the hooks and picks the one to show."""
 import json
-import math
 import os
 import time
 
-from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QPainterPath, QPen
+from PySide6.QtCore import QRectF, Qt
+from PySide6.QtGui import QColor
 
 import claude_sprite as cl
 from lang import tr
@@ -23,8 +23,7 @@ AGENTS = (("claude", "Claude"), ("codex", "Codex"), ("antigravity", "Antigravity
 NAMES = dict(AGENTS)
 WORK = ("think", "read", "edit", "run", "web", "greet")
 # свой цвет у каждого (кромка значка, подпись «работает»); Codex — нейтральный: берётся цвет текста острова
-COLOR = {"claude": QColor(cl.BODY), "codex": None, "antigravity": QColor("#7c9cff")}
-ORBIT2 = QColor("#b58cff")
+COLOR = {"claude": QColor(cl.BODY), "codex": QColor(cl.CODEX), "antigravity": QColor(cl.AGY_TOP)}
 YELLOW, GREEN, RED = QColor("#ffd60a"), QColor("#30d158"), QColor("#ff453a")
 RANK = {"ask": 0, "done": 1, "oops": 2, "greet": 3, "think": 3, "read": 3, "edit": 3, "run": 3, "web": 3}
 
@@ -101,10 +100,8 @@ def color(agent, state, fg):
 
 
 def speed(agent, state):
-    """Мс на кадр анимации значка."""
-    if agent == "claude":
-        return cl.SPEED.get(state, 300)
-    return 90 if state in WORK else 160 if state in ("ask", "oops") else 260
+    """Мс на кадр анимации персонажа."""
+    return cl.SPEED.get(state, 300)
 
 
 def open_app(agent):
@@ -121,87 +118,21 @@ def open_app(agent):
         return False
 
 
-# ---------- значки ----------
+# ---------- персонажи ----------
 
-def sprite(p, x0, y0, px, state, body_only=False):
-    """Пиксельный Claude: левый верхний угол тела (x0, y0), px — размер «пикселя»."""
+def sprite(p, x0, y0, px, state, body_only=False, who="claude"):
+    """Пиксельный помощник: левый верхний угол тела (x0, y0), px — размер «пикселя».
+    body_only — без реквизита вокруг (для маленькой капсулы и капли)."""
     f = int(time.monotonic() * 1000 / cl.SPEED.get(state, 300))
     p.setPen(Qt.NoPen)
-    for c, r, col in cl.sprite(state, f):
+    for c, r, col in cl.sprite(state, f, who=who):
         if body_only and not (0 <= c <= 11 and -1 <= r <= 6):
             continue
         p.setBrush(col)
         p.drawRect(QRectF(x0 + c * px, y0 + r * px, px + 0.3, px + 0.3))
 
 
-def terminal(p, c, size, state, fg):
-    """Codex — окошко терминала: «>» и мигающий курсор; работает — курсор бегает, спрашивает — «?»."""
-    t = time.monotonic()
-    w, h = size * 1.25, size
-    box = QRectF(c.x() - w / 2, c.y() - h / 2, w, h)
-    p.setPen(QPen(fg, max(1.2, size / 11)))
-    p.setBrush(Qt.NoBrush)
-    p.drawRoundedRect(box, size * 0.22, size * 0.22)
-    lw = max(1.4, size / 8)
-    p.setPen(QPen(color("codex", state, fg) if state in ("ask", "done", "oops") else fg, lw, Qt.SolidLine,
-                  Qt.RoundCap, Qt.RoundJoin))
-    k = size / 20
-    x, y = box.left() + 5 * k, c.y()
-    if state == "done":  # галочка
-        path = QPainterPath(QPointF(x, y))
-        path.lineTo(x + 3 * k, y + 3 * k)
-        path.lineTo(x + 10 * k, y - 4 * k)
-        p.drawPath(path)
-        return
-    path = QPainterPath(QPointF(x, y - 3.5 * k))  # «>»
-    path.lineTo(x + 3.5 * k, y)
-    path.lineTo(x, y + 3.5 * k)
-    p.drawPath(path)
-    if state == "ask":
-        p.drawText(QRectF(x + 5 * k, y - 6 * k, 8 * k, 12 * k), Qt.AlignCenter, "?")
-        return
-    blink = (t * (5 if state in WORK else 1.6)) % 1 < 0.6
-    if blink:
-        run = (t * 2.2) % 1 * 3 * k if state in WORK else 0
-        p.drawLine(QPointF(x + 6 * k + run, y + 3.5 * k), QPointF(x + 10.5 * k + run, y + 3.5 * k))
-
-
-def orbit(p, c, size, state, fg):
-    """Antigravity — планета с орбитой: по орбите бежит спутник (работает — быстро), в центре — цвет состояния."""
-    t = time.monotonic()
-    rx, ry = size * 0.62, size * 0.26
-    tilt = -18
-    lw = max(1.2, size / 12)
-    p.save()
-    p.translate(c)
-    p.rotate(tilt)
-    p.setBrush(Qt.NoBrush)
-    p.setPen(QPen(COLOR["antigravity"], lw))
-    p.drawEllipse(QPointF(0, 0), rx, ry)
-    rate = 2.6 if state in WORK else 0.7
-    a = t * rate * 2 * math.pi
-    sat = QPointF(rx * math.cos(a), ry * math.sin(a))
-    behind = math.sin(a) < 0  # спутник за планетой — рисуем до неё
-    core = color("antigravity", state, fg) if state in ("ask", "done", "oops") else QColor(ORBIT2)
-    if behind:
-        p.setPen(Qt.NoPen)
-        p.setBrush(QColor(fg))
-        p.drawEllipse(sat, lw * 1.25, lw * 1.25)
-    p.setPen(Qt.NoPen)
-    p.setBrush(core)
-    p.drawEllipse(QPointF(0, 0), size * 0.24, size * 0.24)
-    if not behind:
-        p.setBrush(QColor(fg))
-        p.drawEllipse(sat, lw * 1.25, lw * 1.25)
-    p.restore()
-
-
-def icon(p, agent, state, c, size, fg):
-    """Значок помощника по центру c; size — высота (Claude рисуется пикселями под ту же высоту)."""
-    if agent == "claude":
-        px = size / 7
-        sprite(p, c.x() - 6 * px, c.y() - 3.5 * px, px, state, body_only=True)
-    elif agent == "codex":
-        terminal(p, c, size * 0.82, state, fg)
-    else:
-        orbit(p, c, size, state, fg)
+def icon(p, agent, state, c, size, fg=None):
+    """Персонаж помощника по центру c; size — высота тела в пикселях экрана."""
+    px = size / 7
+    sprite(p, c.x() - 6 * px, c.y() - 3.5 * px, px, state, body_only=True, who=agent or "claude")

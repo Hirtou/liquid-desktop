@@ -162,8 +162,9 @@ class TitleButton(QAbstractButton):
 class PillButton(QAbstractButton):
     """Стеклянная кнопка-капсула с текстом."""
 
-    def __init__(self, text):
+    def __init__(self, text, accent=False):
         super().__init__(cursor=Qt.PointingHandCursor)
+        self.accent = accent  # синяя (как выбранный вариант) — заметная: «Установить обновление»
         self.setText(text)
         self.setAttribute(Qt.WA_Hover)
         self.setFixedHeight(32)
@@ -175,6 +176,13 @@ class PillButton(QAbstractButton):
         dark = bool(self.window().dark)
         hover = self.underMouse()
         r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        if self.accent:
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor("#3d7cff" if hover else "#2f6bff") if self.isEnabled() else QColor(47, 107, 255, 120))
+            p.drawRoundedRect(r, r.height() / 2, r.height() / 2)
+            p.setPen(QColor("#ffffff"))
+            p.drawText(r, Qt.AlignCenter, self.text())
+            return
         p.setPen(QPen(QColor(255, 255, 255, 60 if dark else 170), 1))
         p.setBrush(QColor(255, 255, 255, (45 if hover else 25) if dark else (190 if hover else 130)))
         p.drawRoundedRect(r, r.height() / 2, r.height() / 2)
@@ -496,6 +504,12 @@ class Catalog(DesktopWidget):
         self.section_bar.changed.connect(self.show_section)
         head.addWidget(self.section_bar, alignment=Qt.AlignTop)
         head.addStretch()
+        # появляется в шапке, когда на GitHub вышла новая версия (её находит updater раз в 6 часов)
+        self.update_btn = PillButton(tr("Установить обновление"), accent=True)
+        self.update_btn.setToolTip(tr("Вышла новая версия. Скачается и встанет поверх — виджеты и настройки останутся."))
+        self.update_btn.hide()
+        head.addWidget(self.update_btn, alignment=Qt.AlignTop)
+        head.addSpacing(8)
         self.title_label, self.sub_label = title, sub
         # язык — в шапке: в нижней строке настроек ему не хватало места (окно расползалось вширь)
         lang_tip = tr("Язык меняется перезапуском программы (пара секунд).")
@@ -1240,7 +1254,7 @@ def main():
     tray.activated.connect(lambda reason: catalog.open() if reason == QSystemTrayIcon.Trigger else None)
     tray.show()
     catalog.tray = tray
-    catalog.updater = updater.Updater(tray, menu, sep, catalog.quit)
+    catalog.updater = updater.Updater(tray, menu, sep, catalog.quit, catalog.update_btn)
 
     def on_game(playing):
         tray.setToolTip(tr("Виджеты — игровой режим: всё на паузе")

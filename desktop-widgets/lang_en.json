@@ -685,5 +685,8 @@
  "запустится с Windows": "will start with Windows",
  "запускается…": "starting…",
  "выключен — остались только виджеты": "off — only the widgets stay",
- "не вышло: нет доступа к автозапуску": "failed: no access to startup settings"
+ "не вышло: нет доступа к автозапуску": "failed: no access to startup settings",
+ "Установить обновление {}": "Install update {}",
+ "Вышла новая версия {}": "New version {} is out",
+ "Вышла новая версия. Скачается и встанет поверх — виджеты и настройки останутся.": "A new version is out. It downloads and installs over this one — your widgets and settings stay."
 }

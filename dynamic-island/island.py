@@ -1687,7 +1687,7 @@ class Island(QWidget):
             detail = ""  # то же самое второй строкой не повторять
         if not big:
             # в капсуле — подробность («Правлю App.tsx»), если она есть: она говорит больше, чем «Правлю…»
-            ag.icon(p, who, st, QPointF(r.left() + 26, r.center().y() + 0.5), 14 if who == "claude" else 17, FG)
+            ag.icon(p, who, st, QPointF(r.left() + 26, r.center().y() + 0.5), 14, FG)
             p.setFont(font(13))
             p.setPen(color if call else FG)
             w = r.width() - 52 - (52 if elapsed else 16)
@@ -1698,10 +1698,8 @@ class Island(QWidget):
                 p.setPen(DIM)
                 p.drawText(QRectF(r.right() - 64, r.top(), 50, r.height()), Qt.AlignRight | Qt.AlignVCenter, elapsed)
             return
-        if who == "claude":  # персонаж целиком — с лупой, листком, терминалом
-            ag.sprite(p, r.left() + 20, r.top() + 42, 4, st)
-        else:
-            ag.icon(p, who, st, QPointF(r.left() + 58, r.top() + 56), 40, FG)
+        # персонаж целиком — с лупой, листком, терминалом (у всех помощников одинаково)
+        ag.sprite(p, r.left() + 20, r.top() + 42, 4, st, who=who)
         x, w = r.left() + 124, r.width() - 124 - 20
         p.setFont(font(12, "Segoe UI"))
         p.setPen(DIM)

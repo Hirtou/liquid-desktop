@@ -40,22 +40,27 @@ def _get(url, timeout=15):
 
 
 class Updater(QObject):
-    found = Signal(str, str)      # сборка, ссылка на установщик
+    found = Signal(str, str, str)  # сборка, ссылка на установщик, версия («v0.3.3-alpha»)
     progress = Signal(int)        # проценты скачивания
     failed = Signal(str)
     downloaded = Signal(str)      # путь к установщику
 
-    def __init__(self, tray, menu, before_action, quit_app):
+    def __init__(self, tray, menu, before_action, quit_app, button=None):
+        """button — кнопка «Установить обновление» в окне настроек (видна, только когда есть обновление)."""
         super().__init__()
+        self.button = button
+        if button is not None:
+            button.clicked.connect(self.install)
+            button.hide()
         self.build = local_build()
         self.tray, self.quit_app = tray, quit_app
-        self.url = None
+        self.url, self.version = None, ""
         self.busy = False
         self.action = menu.addAction(tr("Установить обновление"), self.install)
         menu.insertAction(before_action, self.action)
         self.action.setVisible(False)
         self.found.connect(self.on_found)
-        self.progress.connect(lambda p: self.action.setText(tr("Скачивание обновления… {}%").format(p)))
+        self.progress.connect(self.on_progress)
         self.failed.connect(self.on_failed)
         self.downloaded.connect(self.run_setup)
         tray.messageClicked.connect(lambda: self.url and self.install())
@@ -77,24 +82,42 @@ class Updater(QObject):
                 return
             remote = str(json.loads(_get(assets["version.json"]))["build"])
             if remote > self.build:
-                self.found.emit(remote, assets[SETUP])
+                self.found.emit(remote, assets[SETUP], str(rel.get("tag_name") or ""))
         except Exception:  # нет сети, лимит GitHub — просто попробуем позже
             pass
 
-    def on_found(self, remote, url):
+    def label(self):
+        v = self.version.lstrip("v").replace("-alpha", " alpha")
+        return tr("Установить обновление {}").format(v) if v else tr("Установить обновление")
+
+    def set_text(self, text):
+        self.action.setText(text)
+        if self.button is not None:
+            self.button.setText(text)
+            self.button.setMinimumWidth(self.button.fontMetrics().horizontalAdvance(text) + 36)
+
+    def on_found(self, remote, url, version=""):
         first = self.url is None
-        self.url = url
-        self.action.setText(tr("Установить обновление"))
+        self.url, self.version = url, version
+        self.set_text(self.label())
         self.action.setVisible(True)
-        if first:
-            self.tray.showMessage(tr("Доступно обновление"),
-                                  tr("Нажми, чтобы установить. Настройки и виджеты останутся."), self.tray.icon(), 8000)
+        if self.button is not None:
+            self.button.show()
+        if first:  # уведомление Windows — один раз за запуск (клик по нему — установить)
+            v = version.lstrip("v").replace("-alpha", " alpha")
+            self.tray.showMessage(tr("Вышла новая версия {}").format(v) if v else tr("Доступно обновление"),
+                                  tr("Нажми, чтобы установить. Настройки и виджеты останутся."), self.tray.icon(), 10000)
+
+    def on_progress(self, p):
+        self.set_text(tr("Скачивание обновления… {}%").format(p))
 
     def install(self):
         if self.busy or not self.url:
             return
         self.busy = True
         self.action.setEnabled(False)
+        if self.button is not None:
+            self.button.setEnabled(False)
         threading.Thread(target=self._download, daemon=True).start()
 
     def _download(self):
@@ -120,7 +143,9 @@ class Updater(QObject):
     def on_failed(self, err):
         self.busy = False
         self.action.setEnabled(True)
-        self.action.setText(tr("Установить обновление"))
+        if self.button is not None:
+            self.button.setEnabled(True)
+        self.set_text(self.label())
         self.tray.showMessage(tr("Не удалось скачать обновление"), tr("Проверь интернет и попробуй ещё раз."),
                               self.tray.icon(), 6000)
 

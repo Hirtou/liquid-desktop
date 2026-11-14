@@ -66,8 +66,8 @@ Liquid Desktop is two small open-source apps written in Python + PySide6:
 3. Right after install the widgets window and the Dynamic Island start by themselves — no extra clicks.
    The **Start with Windows** checkboxes (widgets and island) are ticked by default.
 
-**Updates:** when a new build is out, the widgets' tray menu shows **Install update** — one click, your
-widgets and settings stay. **Uninstall:** Windows Settings → Apps → Liquid Desktop.
+**Updates:** when a new build is out, a Windows notification says which version, a blue **Install update** button
+appears at the top of the widgets window (and in the tray menu) — one click, your widgets and settings stay. **Uninstall:** Windows Settings → Apps → Liquid Desktop.
 
 Prefer no installer? Download **`LiquidDesktop-portable-win64.zip`** instead, unpack it anywhere and
 double-click **`Start widgets.bat`** / **`Start Dynamic Island.bat`**. To remove it, quit both apps and delete the folder.
@@ -172,8 +172,8 @@ Liquid Desktop — две небольшие программы с открыт�
 3. Сразу после установки сами запускаются окно виджетов и динамический остров — ничего нажимать не нужно.
    Галочки **«Запускать с Windows»** (виджеты и остров) включены по умолчанию.
 
-**Обновления:** когда выйдет новая сборка, в меню виджетов в трее появится **«Установить обновление»** — один клик,
-виджеты и настройки останутся. **Удалить:** Параметры Windows → Приложения → Liquid Desktop.
+**Обновления:** когда выйдет новая сборка, придёт уведомление Windows с номером версии, а вверху окна виджетов (и в меню
+в трее) появится синяя кнопка **«Установить обновление»** — один клик, виджеты и настройки останутся. **Удалить:** Параметры Windows → Приложения → Liquid Desktop.
 
 Без установщика: скачай **`LiquidDesktop-portable-win64.zip`**, распакуй куда удобно и дважды щёлкни
 **`Start widgets.bat`** / **`Start Dynamic Island.bat`**. Удалить — выйти из обеих программ и стереть папку.
