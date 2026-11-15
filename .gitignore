@@ -17,6 +17,10 @@ weather_alert.json
 weather_now.json
 claude_status.json
 claude_status.json.lock
+opencode_status.json
 stopped
+
+# Local virtualenv / локальное окружение
+.venv/
 
 *.broken-*.json
