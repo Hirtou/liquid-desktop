@@ -76,6 +76,10 @@ QLabel#bubble {{ background: {bubble}; border: 1px solid {cardline}; border-radi
 
 class Config:
     def __init__(self):
+        self._save_pending = False
+        self._save_timer = QTimer()
+        self._save_timer.setSingleShot(True)
+        self._save_timer.timeout.connect(self._save_now)
         try:
             with open(CONFIG_PATH, encoding="utf-8-sig") as f:  # -sig: Блокнот мог дописать BOM
                 self.data = json.load(f)
@@ -95,11 +99,25 @@ class Config:
         return self.data.setdefault(name, {})
 
     def save(self):
+        """Отложенное сохранение (debounce 0.5 с): много последовательных изменений — одна запись на диск."""
+        if self._save_pending:
+            return
+        self._save_pending = True
+        self._save_timer.start(500)
+
+    def _save_now(self):
+        self._save_pending = False
         # сначала во временный файл, потом подмена целиком: выключат свет посреди записи — старый файл цел
         tmp = CONFIG_PATH + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(self.data, f, ensure_ascii=False, indent=2)
         os.replace(tmp, CONFIG_PATH)
+
+    def flush(self):
+        """Сохранить прямо сейчас (при выходе из программы)."""
+        if self._save_pending:
+            self._save_timer.stop()
+            self._save_now()
 
 
 config = Config()

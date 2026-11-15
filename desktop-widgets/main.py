@@ -1142,6 +1142,7 @@ class Catalog(DesktopWidget):
 
     def quit(self):
         self.quitting = True
+        config.flush()  # сохранить настройки перед выходом
         QApplication.quit()
 
 

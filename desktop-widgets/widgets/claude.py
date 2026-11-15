@@ -52,9 +52,14 @@ LATE, HAT, HAT_FUR = QColor("#3a3f4b"), QColor("#e5484d"), QColor("#f4f5f8")
 
 
 def new_year():
-    """Новогодний колпак: с 20 декабря по 10 января."""
+    """Новогодний колпак: с 20 декабря по 10 января. Кэшируется на сутки — дата не меняется в течение дня."""
+    now = time.time()
+    if getattr(new_year, "_cached", None) is not None and now - new_year._cached[0] < 86400:
+        return new_year._cached[1]
     t = time.localtime()
-    return (t.tm_mon == 12 and t.tm_mday >= 20) or (t.tm_mon == 1 and t.tm_mday <= 10)
+    result = (t.tm_mon == 12 and t.tm_mday >= 20) or (t.tm_mon == 1 and t.tm_mday <= 10)
+    new_year._cached = (now, result)
+    return result
 
 
 def sprite(state, f, sweat=False, smooth=False):

@@ -690,11 +690,7 @@ class Island(QWidget):
             self.restart()
             return
         self.refresh_look()
-        self.check_audio()
-        self.check_caps()
-        self.check_weather()
-        if self.toast and time.monotonic() >= self.toast["until"]:
-            self.toast = None
+        # быстрая часть — каждый такт (250 мс): таймер, фокус, помощники, тост, музыка
         ts = self.timer_state(now)
         fs = self.focus_state(now)
         self.agent = self.agents.pick(now) if settings.get("agents", True) else (None, None, {})
@@ -733,6 +729,12 @@ class Island(QWidget):
             items = []
         self.items = [(k, s) for _, k, s in sorted(items)]
         self.retarget()
+        # медленная часть — не чаще раза в 2 с: звук, капс, погода (не меняются так быстро)
+        if not hasattr(self, "_slow_at") or now - self._slow_at > 2:
+            self._slow_at = now
+            self.check_audio()
+            self.check_caps()
+            self.check_weather()
 
     def state_of(self, kind):
         for k, s in self.items:
