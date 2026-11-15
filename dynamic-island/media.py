@@ -11,6 +11,7 @@ from PySide6.QtCore import QObject, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QImage, QPainterPath, QPen
 
 YT_MUSIC_URL = "https://music.youtube.com"
+YANDEX_URL = "https://music.yandex.ru"
 YT_MUSIC_APP = "cinhimbnkkaeohfgghhklpknlkffjgod"  # приложение YouTube Music, установленное из Chrome/Edge
 BROWSERS = ("chrome", "msedge", "firefox", "opera", "brave", "vivaldi", "browser")
 PLAYING = 4  # статус медиа-панели: 4 — играет, 5 — пауза
@@ -34,24 +35,40 @@ def window_titled(text):
 
 
 _YT_SEEN = set()  # браузеры, в которых сейчас играет YouTube Music
+_YA_SEEN = set()  # браузеры, в которых сейчас играет Яндекс Музыка
+
+
+def is_yandex_app(low):
+    """Приложение Яндекс Музыки (из Microsoft Store — «…Yandex.Music_…», с сайта — «Яндекс Музыка.exe»),
+    но не Яндекс Браузер: у него в имени тоже «yandex»."""
+    return ("yandex" in low and "music" in low) or ("яндекс" in low and "музык" in low)
 
 
 def source_of(app_id):
-    """Откуда музыка: 'spotify', 'ytmusic' или 'other' (любой другой плеер или обычное видео в браузере)."""
+    """Откуда музыка: 'spotify', 'ytmusic', 'yandex' или 'other' (любой другой плеер или обычное видео в браузере)."""
     low = app_id.lower()
     if "spotify" in low:
         return "spotify"
+    if is_yandex_app(low):
+        return "yandex"
     if "youtube" in low or YT_MUSIC_APP in low:  # отдельные приложения YouTube Music
         return "ytmusic"
     if any(b in low for b in BROWSERS):
-        # вкладку видно по заголовку окна, только пока она активна; ушли на другую вкладку — помним, что это
-        # YouTube Music, пока в браузере не откроют обычный YouTube (тогда играть может уже он)
+        # вкладку видно по заголовку окна, только пока она активна; ушли на другую вкладку — помним, чья это
+        # музыка, пока в браузере не откроют обычный YouTube (тогда играть может уже он)
         if window_titled("youtube music"):
             _YT_SEEN.add(app_id)
-        elif app_id in _YT_SEEN and window_titled("- youtube -"):
+            _YA_SEEN.discard(app_id)
+        elif window_titled("яндекс музыка") or window_titled("yandex music"):
+            _YA_SEEN.add(app_id)
             _YT_SEEN.discard(app_id)
+        elif (app_id in _YT_SEEN or app_id in _YA_SEEN) and window_titled("- youtube -"):
+            _YT_SEEN.discard(app_id)
+            _YA_SEEN.discard(app_id)
         if app_id in _YT_SEEN:
             return "ytmusic"
+        if app_id in _YA_SEEN:
+            return "yandex"
     return "other"
 
 
@@ -62,12 +79,29 @@ def choose(status, chosen, current):
     if chosen in playing:
         return chosen
     if playing:
-        rank = {"spotify": 0, "ytmusic": 1, "other": 2}
+        rank = {"spotify": 0, "ytmusic": 1, "yandex": 1, "other": 2}
         return min(playing, key=lambda a: (rank[source_of(a)], a != current))
     if chosen in status:
         return chosen
     spotify = [a for a in status if "spotify" in a.lower()]
     return spotify[0] if spotify else current if current in status else next(iter(status), None)
+
+
+def player_uri(source, app=""):
+    """Что открыть, чтобы попасть в плеер: Spotify, YouTube Music или Яндекс Музыку (приложение, если музыка
+    идёт из него и оно умеет открываться по ссылке, иначе сайт)."""
+    if source == "ytmusic":
+        return YT_MUSIC_URL
+    if source == "yandex":
+        if is_yandex_app(app.lower()):
+            try:
+                import winreg
+                winreg.CloseKey(winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, "yandexmusic"))
+                return "yandexmusic://"
+            except OSError:
+                pass
+        return YANDEX_URL
+    return "spotify:"
 
 
 def clean_artist(artist):
@@ -146,7 +180,8 @@ class Media(QObject):
             except Exception:
                 self.cover = None
         app = s.source_app_user_model_id.split("!")[-1].replace(".exe", "")
-        if key != self.source_key or self.source != "ytmusic":  # вкладку могли переключить: песня остаётся той же
+        # вкладку могли переключить: песня остаётся той же
+        if key != self.source_key or self.source not in ("ytmusic", "yandex"):
             self.source_key, self.source = key, source_of(s.source_app_user_model_id)
         c = pb.controls
         # Spotify выполняет 🔀 и 🔁, но не сообщает о них — держим то, что включили из виджета,

@@ -6,9 +6,12 @@ from core import DesktopWidget, config
 
 
 class NotesWidget(DesktopWidget):
+    keyboard_input = True  # в рабочем столе (app.desktop_child) нужен свой фокус для поля ввода
     key = "notes"
     title = tr("Заметки")
     description = tr("Записка, сохраняется сама")
+    # высота в ячейках сетки (ширина всегда 2): правый клик → «Вид»
+    SHAPES = {"normal": (tr("Обычные"), 2), "long": (tr("Длинные"), 3), "xlong": (tr("Очень длинные"), 4)}
 
     def __init__(self, **kw):
         super().__init__(**kw)
@@ -23,7 +26,10 @@ class NotesWidget(DesktopWidget):
         # сохраняем через полсекунды после последнего нажатия
         self.save_timer = QTimer(self, singleShot=True, interval=500, timeout=self.save)
         self.edit.textChanged.connect(self.save_timer.start)
-        self.fit_grid(2, min_rows=2)  # 2×2 ячейки сетки
+        self.apply_shape()
+
+    def apply_shape(self):
+        self.fit_grid(2, min_rows=self.SHAPES[self.shape()][1])  # 2×2, 2×3 или 2×4 ячейки сетки
 
     def sync_preview(self):
         text = self.cfg.get("text", "")

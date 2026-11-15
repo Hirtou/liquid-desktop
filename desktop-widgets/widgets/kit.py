@@ -79,6 +79,27 @@ def button(p, rect, label, fg, dark, color=None, size=12, tint=None):
     text(p, rect, label, ink, size, "Segoe UI Semibold", Qt.AlignCenter)
 
 
+def sweep(center, color, color2):
+    """Перелив по кругу для дуги, которая идёт от 12 часов по часовой: в начале color2, к концу — color.
+    Шов перелива отодвинут за начало дуги на 12°: скруглённый кончик дуги заходит чуть левее 12 часов,
+    и при шве ровно на 12 часах он красился цветом с другого конца (у таймера — зелёный/голубой кусочек,
+    у помидора — рыжий)."""
+    grad = QConicalGradient(center, 102)
+    grad.setColorAt(0, color)
+    grad.setColorAt(0.955, color2)
+    grad.setColorAt(1, color2)
+    return grad
+
+
+def ring_brush(center, color, color2, frac):
+    """Чем красить дугу: перелив, а полное кольцо — ровным цветом. У полного кольца перелив сходится сам с собой,
+    и на стыке у 12 часов был виден резкий шов (таймер на паузе с полным кольцом)."""
+    if frac >= 0.995:
+        return QColor((color.red() + color2.red()) // 2, (color.green() + color2.green()) // 2,
+                      (color.blue() + color2.blue()) // 2)
+    return sweep(center, color, color2)
+
+
 def ring(p, center, radius, frac, color, track, width=12, color2=None):
     """Кольцо прогресса; color2 — второй цвет: дуга с переливом по кругу, как у «Воды» и «Таймера»."""
     p.setBrush(Qt.NoBrush)
@@ -87,9 +108,7 @@ def ring(p, center, radius, frac, color, track, width=12, color2=None):
     if frac > 0:
         brush = color
         if color2 is not None:
-            brush = QConicalGradient(center, 90)
-            brush.setColorAt(0, color)
-            brush.setColorAt(1, color2)
+            brush = ring_brush(center, color, color2, frac)
         p.setPen(QPen(brush, width, Qt.SolidLine, Qt.RoundCap))
         box = QRectF(center.x() - radius, center.y() - radius, 2 * radius, 2 * radius)
         p.drawArc(box, 90 * 16, int(-min(1.0, frac) * 360 * 16))

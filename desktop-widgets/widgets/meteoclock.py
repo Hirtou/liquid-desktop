@@ -10,6 +10,7 @@ from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPen, QPixmap
 import icons
 from core import DesktopWidget, activity, config, grid, open_uri
 from widgets.weather import fetch, now_values
+from widgets import tz
 
 # такт плавной секундной стрелки: она проходит ~9 px в секунду — при 15 кадрах это 0.6 px за кадр,
 # глазу так же плавно, как при 30, а рисовать вдвое меньше
@@ -45,6 +46,9 @@ class MeteoClockWidget(DesktopWidget):
     def double_click(self):
         open_uri("ms-clock:")
 
+    def add_actions(self, menu):
+        tz.add_menu(menu, self)
+
     def push_interval(self):
         # под ярлыками: плавная секундная стрелка, пока смотришь на стол; иначе раз в секунду
         return SMOOTH if activity.mode == "desktop" else 1000
@@ -55,7 +59,7 @@ class MeteoClockWidget(DesktopWidget):
             self.tick.setInterval(interval)
         if activity.covered(self):  # закрыт окном или игрой — кадр не нужен (откроют — нарисуется сам)
             return
-        minute = datetime.now().minute
+        minute = tz.now(self.cfg).minute
         if interval == SMOOTH and minute == getattr(self, "_minute", None):
             self.update(self.hands_rect())  # плавная стрелка: каждый кадр — только квадрат со стрелками
         else:
@@ -93,7 +97,7 @@ class MeteoClockWidget(DesktopWidget):
         p = QPainter(self)
         p.setRenderHints(QPainter.Antialiasing | QPainter.TextAntialiasing)
         r = QRectF(self.card())
-        now = datetime.now()
+        now = tz.now(self.cfg)
         # всё, кроме стрелок, меняется раз в минуту — рисуем в картинку один раз и кладём каждый кадр
         # ключ считается 15 раз в секунду — без strftime и сортировки: погода меняется только в on_weather
         key = (self.card().size(), bool(self.dark), (now.day, now.hour, now.minute), id(self.weather),

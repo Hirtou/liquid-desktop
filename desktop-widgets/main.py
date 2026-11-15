@@ -134,12 +134,16 @@ class Switch(QAbstractButton):
 
 
 class TitleButton(QAbstractButton):
-    """Круглая стеклянная кнопка окна: ✕ (закрыть), – (свернуть) или жучок («Сообщить о баге»)."""
+    """Круглая стеклянная кнопка окна: ✕ (закрыть), – (свернуть), жучок («Сообщить о баге»), сердечко («Поддержать автора»)."""
 
-    def __init__(self, kind="close"):
+    def __init__(self, kind="close", text=""):
         super().__init__(cursor=Qt.PointingHandCursor)
         self.kind = kind
-        self.setFixedSize(32, 32)
+        self.label = text  # с надписью кнопка — капсула: значок слева, текст справа
+        f = QFont("Segoe UI")
+        f.setPixelSize(13)
+        self.setFont(f)
+        self.setFixedSize(32 + (int(QFontMetricsF(f).horizontalAdvance(text)) + 12 if text else 0), 32)
         self.setAttribute(Qt.WA_Hover)
 
     def paintEvent(self, event):
@@ -149,8 +153,10 @@ class TitleButton(QAbstractButton):
         hover = self.underMouse()
         p.setPen(QPen(QColor(255, 255, 255, 60 if dark else 170), 1))
         p.setBrush(QColor(255, 255, 255, (45 if hover else 25) if dark else (190 if hover else 130)))
-        p.drawEllipse(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5))
+        p.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), 15.5, 15.5)
         p.setPen(QPen(QColor("#f5f6fb" if dark else "#2a2c33"), 1.6, Qt.SolidLine, Qt.RoundCap))
+        if self.label:
+            p.drawText(QRectF(30, 0, self.width() - 38, 31), Qt.AlignVCenter | Qt.AlignLeft, self.label)
         c, s = QPointF(16, 16), 4.5
         if self.kind == "min":
             p.drawLine(c + QPointF(-s, 0), c + QPointF(s, 0))
@@ -164,6 +170,16 @@ class TitleButton(QAbstractButton):
             for y, d in ((15, -1.2), (18, 0), (21, 1.2)):
                 p.drawLine(QPointF(12.2, y), QPointF(9.4, y + d))
                 p.drawLine(QPointF(19.8, y), QPointF(22.6, y + d))
+        elif self.kind == "heart":  # сердечко — «Поддержать автора»
+            heart = QPainterPath()
+            heart.moveTo(16, 22.6)
+            heart.cubicTo(9.2, 17.8, 8.6, 13.6, 10.6, 11.4)
+            heart.cubicTo(12.4, 9.5, 15.0, 10.0, 16, 12.2)
+            heart.cubicTo(17.0, 10.0, 19.6, 9.5, 21.4, 11.4)
+            heart.cubicTo(23.4, 13.6, 22.8, 17.8, 16, 22.6)
+            p.setPen(QPen(QColor("#ff5c7a"), 1.5, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            p.setBrush(QColor(255, 92, 122, 150 if hover else 70))
+            p.drawPath(heart)
         else:
             p.drawLine(c + QPointF(-s, -s), c + QPointF(s, s))
             p.drawLine(c + QPointF(-s, s), c + QPointF(s, -s))
@@ -425,6 +441,38 @@ class Preview(QWidget):
             p.drawPixmap(self.dst, self.pix, QRectF(self.pix.rect()))
 
 
+class TwoLines(QWidget):
+    """Описание в карточке каталога: ровно две строки, лишнее — многоточием (целиком — в подсказке).
+    Обычная подпись с переносом на длинном описании занимала три строки, карточка той же высоты —
+    и текст залезал на картинку виджета."""
+
+    def __init__(self, text):
+        super().__init__()
+        self.text = text
+        f = QFont("Segoe UI")
+        f.setPixelSize(12)
+        self.setFont(f)
+        self.line = QFontMetricsF(f).lineSpacing()
+        self.setFixedHeight(int(self.line * 2) + 2)
+        self.setToolTip(text)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.TextAntialiasing)
+        p.setFont(self.font())
+        p.setPen(QColor(glass.THEMES[bool(self.window().dark)]["dim"]))
+        fm, width = QFontMetricsF(self.font()), self.width()
+        words, first = self.text.split(), ""
+        while words and fm.horizontalAdvance((first + " " + words[0]).strip()) <= width:
+            first = (first + " " + words.pop(0)).strip()
+        if not first and words:  # одно слово шире строки
+            first = words.pop(0)
+        p.drawText(QRectF(0, 0, width, self.line), Qt.AlignLeft | Qt.AlignVCenter, first)
+        if words:
+            p.drawText(QRectF(0, self.line, width, self.line), Qt.AlignLeft | Qt.AlignVCenter,
+                       fm.elidedText(" ".join(words), Qt.ElideRight, width))
+
+
 class Card(QFrame):
     """Карточка виджета: живое превью, название, описание, тумблер. Клик по карточке — тоже переключает."""
 
@@ -451,11 +499,11 @@ class Card(QFrame):
         head.addWidget(name)
         head.addStretch()
         text.addLayout(head)
-        desc = QLabel(cls.description, objectName="dim", wordWrap=True)
-        desc.setStyleSheet("font-size: 12px;")
+        desc = TwoLines(cls.description)
         text.addWidget(desc)
         row.addLayout(text, 1)
         self.switch = Switch()
+        self.switch.setToolTip(tr("Включить или выключить этот виджет на рабочем столе"))
         self.switch.clicked.connect(lambda: on_click())  # clicked передаёт bool — его не пускаем дальше
         row.addWidget(self.switch, alignment=Qt.AlignVCenter)
         lay.addLayout(row)
@@ -511,6 +559,7 @@ class Catalog(DesktopWidget):
         # одно приложение — три раздела: виджеты, остров, погода (место — общее для виджетов и острова)
         self.section_bar = Segmented([("widgets", tr("Виджеты")), ("island", tr("Остров")), ("weather", tr("Погода"))],
                                      "widgets")
+        self.section_bar.setToolTip(tr("Разделы настроек: виджеты, динамический остров, погода и место"))
         self.section_bar.changed.connect(self.show_section)
         head.addWidget(self.section_bar, alignment=Qt.AlignTop)
         head.addStretch()
@@ -528,7 +577,13 @@ class Catalog(DesktopWidget):
         self.lang.changed.connect(self.set_lang)
         head.addWidget(self.lang, alignment=Qt.AlignTop)
         head.addSpacing(8)
-        bug_btn = TitleButton("bug")
+        support_btn = TitleButton("heart", tr("Поддержать автора"))
+        support_btn.setToolTip(tr("Поддержать автора") + "\n"
+                               + tr("Откроет страницу проекта на Boosty. Программа бесплатная — это по желанию."))
+        support_btn.clicked.connect(bugreport.support)
+        head.addWidget(support_btn, alignment=Qt.AlignTop)
+        head.addSpacing(6)
+        bug_btn = TitleButton("bug", tr("Сообщить о баге"))
         bug_btn.setToolTip(tr("Сообщить о баге") + "\n" + tr("Откроет наш Telegram-канал — напиши в комментариях, что случилось."))
         bug_btn.clicked.connect(lambda: self.report_bug(bug_btn))
         head.addWidget(bug_btn, alignment=Qt.AlignTop)
@@ -584,8 +639,11 @@ class Catalog(DesktopWidget):
         glass_row = QHBoxLayout()  # вторая строка — стекло: заливка, размытие, замутнение
         glass_row.setSpacing(12)
         rows.addLayout(glass_row)
-        row.addWidget(QLabel(tr("Запускать с Windows")))
+        auto_label = QLabel(tr("Запускать с Windows"))
+        auto_label.setToolTip(tr("Виджеты сами запускаются при входе в Windows — тихо, значком в трее."))
+        row.addWidget(auto_label)
         self.autostart = Switch()
+        self.autostart.setToolTip(auto_label.toolTip())
         self.autostart.set_quiet(autostart_enabled())
         self.autostart.toggled.connect(set_autostart)
         row.addWidget(self.autostart)
@@ -596,6 +654,7 @@ class Catalog(DesktopWidget):
                          "тогда стекло берётся из обоев, а не живое."))
         row.addWidget(shots)
         self.on_shots = Switch()
+        self.on_shots.setToolTip(shots.toolTip())
         self.on_shots.set_quiet(bool(config.section("app").get("on_screenshots")))
         self.on_shots.toggled.connect(self.set_on_screenshots)
         row.addWidget(self.on_shots)
@@ -606,10 +665,20 @@ class Catalog(DesktopWidget):
                                     "С Wallpaper Engine не работает: его видео закрывает всё под ярлыками —\n"
                                     "тогда виджеты остаются обычными окнами."))
         row.addWidget(self.under_label)
+        child_label = QLabel(tr("В рабочем столе (тест)"))
+        child_label.setToolTip(tr("Вкл — виджеты становятся частью рабочего стола, как ярлыки: Win+D и окна других программ их не двигают и не прячут. Стекло тогда берётся из обоев (живого акрила нет). Пока проверяем — может глючить."))
+        self.desktop_child = Switch()
+        self.desktop_child.setToolTip(child_label.toolTip())
+        self.desktop_child.set_quiet(bool(config.section("app").get("desktop_child", False)))
+        self.desktop_child.toggled.connect(self.set_desktop_child)
         self.under_icons = Switch()
+        self.under_icons.setToolTip(self.under_label.toolTip())
         self.under_icons.set_quiet(config.section("app").get("under_icons", False))
         self.under_icons.toggled.connect(self.set_under_icons)
         row.addWidget(self.under_icons)
+        row.addSpacing(10)
+        row.addWidget(child_label)
+        row.addWidget(self.desktop_child)
         row.addSpacing(10)
         game_tip = tr("Пока открыта игра или видео на весь экран, виджеты замирают на всех мониторах:\n"
                       "не рисуют, не снимают стекло и не опрашивают датчики, пинг и плеер.\n"
@@ -667,6 +736,7 @@ class Catalog(DesktopWidget):
                            "Выкл — простая полупрозрачная изморозь, её плотность — «Заливка»."))
         glass_row.addWidget(acrylic)
         self.acrylic = Switch()
+        self.acrylic.setToolTip(acrylic.toolTip())
         self.acrylic.set_quiet(app.get("acrylic", True))
         self.acrylic.toggled.connect(self.set_acrylic)
         glass_row.addWidget(self.acrylic)
@@ -678,6 +748,7 @@ class Catalog(DesktopWidget):
         self.move_btn.clicked.connect(lambda: self.set_editing(not activity.editing))
         row.addWidget(self.move_btn)
         quit_btn = PillButton(tr("Выйти из программы"))
+        quit_btn.setToolTip(tr("Закрыть программу совсем: виджеты уберутся с рабочего стола, значок в трее пропадёт."))
         quit_btn.clicked.connect(self.quit)
         row.addWidget(quit_btn)
         page_lay.addWidget(bar)
@@ -701,7 +772,12 @@ class Catalog(DesktopWidget):
 
         for cls in widgets.ALL:
             if config.section(cls.key).get("visible"):
-                self.toggle(cls)
+                try:
+                    self.toggle(cls)
+                except Exception:  # один сломанный виджет (испорченные настройки, нет нужной службы Windows)
+                    traceback.print_exc()  # не должен ронять запуск всей программы
+                    self.instances.pop(cls.key, None)
+                    self.cards[cls.key].switch.set_quiet(False)
             else:
                 self.cards[cls.key].switch.set_quiet(False)
 
@@ -852,6 +928,9 @@ class Catalog(DesktopWidget):
             card.preview.release()
         self.glass_img = self.last_src = self._chrome_pix = None
         self._chrome_key = None
+        # стекло отпустили — значит и пометку «уже нарисовано» снять: иначе при следующем показе окно считало,
+        # что матовое стекло на месте, не рисовало его заново и открывалось прозрачным (через раз)
+        self.flat_key = None
         self.due, self.same = 0.0, 0  # покажут снова — стекло снять сразу
 
     def hideEvent(self, event):
@@ -979,6 +1058,17 @@ class Catalog(DesktopWidget):
             w.flat_key = None
             w.rebuild()
         self.refresh_previews()
+
+    def set_desktop_child(self, on):
+        """Виджеты внутри рабочего стола (desktop_host.py) — или снова отдельными окнами."""
+        config.section("app")["desktop_child"] = bool(on)
+        config.save()
+        for w in list(self.instances.values()):
+            if not w.placed:
+                continue
+            if not on and w.desktop_host is not None:
+                w.desktop_host.detach()
+            w.place()
 
     def set_acrylic(self, on):
         config.section("app")["acrylic"] = on
@@ -1266,19 +1356,25 @@ def main():
     menu.addAction(tr("Открыть"), catalog.open)
     catalog.tray_move = menu.addAction(tr("Двигать виджеты"), lambda: catalog.set_editing(not activity.editing))
     menu.addAction(tr("Сообщить об ошибке"), bugreport.report)
+    menu.addAction(tr("Поддержать автора"), bugreport.support)
     sep = menu.addSeparator()
     menu.addAction(tr("Выход"), catalog.quit)
     tray.setContextMenu(menu)
     tray.activated.connect(lambda reason: catalog.open() if reason == QSystemTrayIcon.Trigger else None)
     tray.show()
     catalog.tray = tray
+    if glass.boot_seconds() < 300:
+        # запуск вместе с Windows: панель задач бывает ещё не готова, и значок не появлялся вовсе —
+        # поставить его ещё раз, когда вход в систему закончится
+        for delay in (15000, 60000):
+            QTimer.singleShot(delay, lambda: (tray.hide(), tray.show()))
     catalog.updater = updater.Updater(tray, menu, sep, catalog.quit, catalog.update_btn)
 
     def on_game(playing):
         tray.setToolTip(tr("Виджеты — игровой режим: всё на паузе")
                         if playing and config.section("app").get("game_pause", True) else tr("Виджеты"))
-        print(time.strftime("%Y-%m-%d %H:%M:%S"), "игра на весь экран:", "началась" if playing else "закончилась",
-              file=sys.stderr, flush=True)
+        print(time.strftime("%Y-%m-%d %H:%M:%S"), "игра на весь экран:",
+              f"началась ({glass.foreground_class()})" if playing else "закончилась", file=sys.stderr, flush=True)
     activity.on_game = on_game
 
     # как обычное приложение: при запуске открывается окно; автозапуск с Windows — тихо, в трей

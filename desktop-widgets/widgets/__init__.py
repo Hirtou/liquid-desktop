@@ -24,6 +24,7 @@ from widgets.meteoclock import MeteoClockWidget
 from widgets.network import NetworkWidget
 from widgets.notes import NotesWidget
 from widgets.photo import PhotoWidget
+from widgets.gif import GifWidget
 from widgets.player import PlayerWidget
 from widgets.sun import SunWidget
 from widgets.system import SystemWidget
@@ -37,4 +38,4 @@ from widgets.worldclock import WorldClockWidget
 ALL = [PlayerWidget, LyricsWidget, MeteoClockWidget, AnalogClockWidget, ClockWidget, WorldClockWidget,
        WeatherWidget, AirWidget, SunWidget, CalendarWidget, ProgressWidget, CountdownWidget, TimerWidget, StopwatchWidget, WaterWidget, HabitsWidget,
        TodoWidget, NotesWidget, ClipboardWidget, CalcWidget, ClaudeWidget, SystemWidget, ProcessesWidget, NetworkWidget, GpuWidget, PingWidget, VolumeWidget,
-       CurrencyWidget, PhotoWidget, FocusWidget, BreatheWidget, DiceWidget, MoonWidget, QuickWidget]
+       CurrencyWidget, PhotoWidget, GifWidget, FocusWidget, BreatheWidget, DiceWidget, MoonWidget, QuickWidget]

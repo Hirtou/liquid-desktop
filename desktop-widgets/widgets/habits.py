@@ -35,6 +35,8 @@ class HabitsWidget(DesktopWidget):
         self.cfg.setdefault("items", [{"name": "Зарядка", "days": []}, {"name": "Чтение", "days": []},
                                       {"name": "Прогулка", "days": []}])
         self.dots = {}
+        self.first = 0  # с какой привычки показываем: длинный список листается колесом
+        self.room = 1
         self.timer = QTimer(self, interval=10 * 60 * 1000, timeout=self.update)  # полночь — новый день
         self.timer.start()
 
@@ -52,6 +54,14 @@ class HabitsWidget(DesktopWidget):
                 return True
         return False
 
+    def wheelEvent(self, event):
+        top = max(0, len(self.cfg["items"]) - self.room)
+        first = max(0, min(top, self.first + (1 if event.angleDelta().y() < 0 else -1)))
+        if first != self.first:
+            self.first = first
+            self.update()
+        event.accept()
+
     def add_actions(self, menu):
         menu.addAction(tr("Добавить привычку…"), self.add_item)
         items = self.cfg["items"]
@@ -66,6 +76,7 @@ class HabitsWidget(DesktopWidget):
         name, ok = QInputDialog.getText(self, tr("Привычки"), tr("Название:"))
         if ok and name.strip():
             self.cfg["items"].append({"name": name.strip()[:40], "days": []})
+            self.first = len(self.cfg["items"])  # новая — внизу списка: показать её (лишнее срежет отрисовка)
             config.save()
             self.update()
 
@@ -106,10 +117,20 @@ class HabitsWidget(DesktopWidget):
             kit.text(p, QRectF(sx + i * (d + gap) - 2, r.top() + 38, d + 4, 12), DAYS[day.weekday()], fg if i == 6 else dim, 9,
                      align=Qt.AlignCenter)
         step = 34
-        room = int((r.bottom() - 10 - (r.top() + 52)) // step)
+        room = self.room = max(1, int((r.bottom() - 10 - (r.top() + 52)) // step))
+        first = self.first = max(0, min(len(items) - room, self.first))
         self.dots = {}
-        for i, item in enumerate(items[:room]):
-            y = r.top() + 52 + i * step
+        if len(items) > room:  # ползунок: где мы в списке
+            lane = QRectF(r.right() - 9, r.top() + 54, 3, room * step - 8)
+            p.setPen(Qt.NoPen)
+            p.setBrush(track)
+            p.drawRoundedRect(lane, 1.5, 1.5)
+            p.setBrush(dim)
+            knob = lane.height() * room / len(items)
+            p.drawRoundedRect(QRectF(lane.left(), lane.top() + (lane.height() - knob) * first / (len(items) - room),
+                                     3, knob), 1.5, 1.5)
+        for i, item in enumerate(items[first:first + room], first):
+            y = r.top() + 52 + (i - first) * step
             color = COLORS[i % len(COLORS)]
             kit.text(p, QRectF(x, y, sx - x - 8, 16), tr(item["name"]), fg, 13, "Segoe UI Semibold", elide=True)
             run = streak(set(item["days"]), today)

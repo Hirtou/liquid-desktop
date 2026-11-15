@@ -5,6 +5,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QLabel, QVBoxLayout
 
 from core import DesktopWidget, open_uri
+from widgets import tz
 
 DAYS = [tr("понедельник"), tr("вторник"), tr("среда"), tr("четверг"), tr("пятница"), tr("суббота"), tr("воскресенье")]
 MONTHS = [tr("января"), tr("февраля"), tr("марта"), tr("апреля"), tr("мая"), tr("июня"),
@@ -29,7 +30,7 @@ class ClockWidget(DesktopWidget):
         lay.setSpacing(0)
         lay.addWidget(self.time, alignment=Qt.AlignCenter)
         lay.addWidget(self.date, alignment=Qt.AlignCenter)
-        self.timer = QTimer(self, interval=1000, timeout=self.tick)
+        self.timer = QTimer(self, interval=1000, timeout=self.show_time)
         self.timer.start()
         self.apply_shape()
 
@@ -37,13 +38,16 @@ class ClockWidget(DesktopWidget):
         size, _, with_date = self.SHAPES[self.shape()][1]
         self.time.setStyleSheet(f"font-size: {size}px; font-weight: {600 if size > 60 else 300};")
         self.date.setVisible(with_date)
-        self.tick()
+        self.show_time()
         self.fit_grid(2)  # 2×1 ячейки сетки
 
     def double_click(self):
         open_uri("ms-clock:")  # приложение «Часы» Windows
 
-    def tick(self):
-        now = datetime.now()
+    def add_actions(self, menu):
+        tz.add_menu(menu, self)
+
+    def show_time(self):
+        now = tz.now(self.cfg)
         self.time.setText(now.strftime("%H:%M:%S" if self.SHAPES[self.shape()][1][1] else "%H:%M"))
         self.date.setText(f"{DAYS[now.weekday()]}, {now.day} {MONTHS[now.month - 1]}")

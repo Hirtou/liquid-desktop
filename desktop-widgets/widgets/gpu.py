@@ -1,7 +1,8 @@
-"""Видеокарта NVIDIA: загрузка (кольцо), температура, память, мощность, вентилятор.
-Опрос раз в 2 с в фоне — напрямую из драйвера: сначала NVAPI (nvapi64.dll, +3 МБ), не вышло — nvml.dll
+"""Видеокарта: загрузка (кольцо), температура, память, мощность, вентилятор.
+Опрос раз в 2 с в фоне. NVIDIA — напрямую из драйвера: сначала NVAPI (nvapi64.dll, +3 МБ), не вышло — nvml.dll
 (она тянет библиотеку драйвера на ~22 МБ, и выгрузить её нельзя), нет и её — через nvidia-smi
-(без окна консоли). Нет утилиты или видеокарты — так и пишем."""
+(без окна консоли). AMD Radeon и Intel — средствами самой Windows (widgets/gpu_any.py), как Диспетчер задач.
+Ничего не нашлось — так и пишем."""
 from lang import tr
 import ctypes
 import os
@@ -14,6 +15,7 @@ from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPen
 from core import DesktopWidget, activity, grid, open_uri
 
 GREEN, AMBER, RED, NVIDIA = QColor("#4ade80"), QColor("#ffb547"), QColor("#ff5a5f"), QColor("#76b900")
+BRAND = {"amd": QColor("#ed1c24"), "intel": QColor("#0f7ddb")}  # цвет кольца по марке; остальное — зелёный NVIDIA
 FIELDS = "name,utilization.gpu,temperature.gpu,memory.used,memory.total,power.draw,fan.speed"
 
 
@@ -178,6 +180,21 @@ def power_limit():
 
 NVAPI = None
 NVML = None
+GENERIC = None
+
+
+def generic():
+    """Видеокарта любой марки через Windows (AMD, Intel; NVIDIA без её утилит) -> dict или None."""
+    global GENERIC
+    if GENERIC is None:
+        from widgets import gpu_any
+        GENERIC = gpu_any.Generic()
+    if GENERIC.ok:
+        try:
+            return GENERIC.read()
+        except Exception:
+            GENERIC.ok = False
+    return None
 
 
 def query():
@@ -197,15 +214,20 @@ def query():
             return NVML.read()
         except Exception:
             NVML.lib = None  # драйвер обновился и т.п. — дальше по-старому
+    # драйвера NVIDIA нет — карта другой марки (AMD Radeon, Intel): цифры даёт сама Windows
+    if GENERIC is not None and GENERIC.ok and GENERIC.vendor != "nvidia":
+        data = generic()
+        if data:
+            return data
     try:
         out = subprocess.run(["nvidia-smi", f"--query-gpu={FIELDS}", "--format=csv,noheader,nounits"],
                              capture_output=True, text=True, timeout=4, creationflags=0x08000000).stdout
     except (OSError, subprocess.SubprocessError):
-        return {"error": tr("нет утилиты NVIDIA")}
+        return generic() or {"error": tr("видеокарта не отвечает")}
     line = out.strip().splitlines()[0] if out.strip() else ""
     parts = [s.strip() for s in line.split(",")]
     if len(parts) < 7:
-        return {"error": tr("видеокарта не отвечает")}
+        return generic() or {"error": tr("видеокарта не отвечает")}
 
     def num(s):
         try:
@@ -289,7 +311,7 @@ class GpuWidget(DesktopWidget):
         p.setBrush(Qt.NoBrush)
         p.drawEllipse(c, R, R)
         if load > 0:
-            p.setPen(QPen(NVIDIA, 12, Qt.SolidLine, Qt.RoundCap))
+            p.setPen(QPen(BRAND.get(d.get("vendor"), NVIDIA), 12, Qt.SolidLine, Qt.RoundCap))
             p.drawArc(QRectF(c.x() - R, c.y() - R, 2 * R, 2 * R), 90 * 16, int(-load / 100 * 360 * 16))
         big = QFont("Bahnschrift SemiBold")
         big.setPixelSize(int(R * 0.55))

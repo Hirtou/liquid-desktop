@@ -171,6 +171,14 @@ def main():
     menu.aboutToShow.connect(lambda: on.setChecked(settings.get("enabled", True)))  # могли выключить правым кликом
     tray.setContextMenu(menu)
     tray.show()
+    import ctypes
+    ctypes.windll.kernel32.GetTickCount64.restype = ctypes.c_ulonglong
+    if ctypes.windll.kernel32.GetTickCount64() < 300000:
+        # запуск вместе с Windows: панель задач бывает ещё не готова, и значок не появлялся вовсе —
+        # поставить его ещё раз, когда вход в систему закончится
+        from PySide6.QtCore import QTimer
+        for delay in (15000, 60000):
+            QTimer.singleShot(delay, lambda: (tray.hide(), tray.show()))
     sys.exit(app.exec())
 
 

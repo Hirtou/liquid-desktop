@@ -14,6 +14,7 @@ from PySide6.QtGui import QDesktopServices
 
 REPO = "Hirtou/liquid-desktop"
 TELEGRAM = "https://t.me/Liquid_Desktop"
+BOOSTY = "https://boosty.to/liquiddesktop"  # «Поддержать автора»
 HERE = os.path.dirname(os.path.abspath(__file__))
 PARENT = os.path.dirname(HERE)
 MAX_URL = 7500          # длиннее GitHub и браузеры обрезают
@@ -120,6 +121,11 @@ def chat_text(limit=1200):
         if err:
             text += "\n" + tr("Последняя ошибка ({}):").format(name + ".log") + f"\n{err}\n"
     return text
+
+
+def support():
+    """«Поддержать автора»: открыть страницу проекта на Boosty в браузере."""
+    QDesktopServices.openUrl(QUrl(BOOSTY))
 
 
 def report_telegram():

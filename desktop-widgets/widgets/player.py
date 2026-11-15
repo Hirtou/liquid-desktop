@@ -1,4 +1,4 @@
-"""Плеер Spotify и YouTube Music: обложка, трек, исполнитель, прогресс, кнопки ⏮ ⏯ ⏭, у Spotify — сердечко «в любимые».
+"""Плеер Spotify, YouTube Music и Яндекс Музыки: обложка, трек, исполнитель, прогресс, кнопки ⏮ ⏯ ⏭, у Spotify — сердечко «в любимые».
 
 Через медиа-панель Windows (её используют кнопки громкости и экран блокировки): плеер сам отдаёт туда трек,
 обложку и позицию и принимает команды. Ни входа в аккаунт, ни ключей. Показываем то, что сейчас играет (см. choose);
@@ -22,7 +22,9 @@ from core import DesktopWidget, RADIUS, SHADOW, activity, config, grid, open_uri
 
 GREEN = QColor("#1ed760")
 YT_RED = QColor("#ff0033")
+YA_YELLOW = QColor("#ffdb4d")
 YT_MUSIC_URL = "https://music.youtube.com"
+YANDEX_URL = "https://music.yandex.ru"
 YT_MUSIC_APP = "cinhimbnkkaeohfgghhklpknlkffjgod"  # приложение YouTube Music, установленное из Chrome/Edge
 BROWSERS = ("chrome", "msedge", "firefox", "opera", "brave", "vivaldi", "browser")
 PLAYING = 4  # статус медиа-панели: 4 — играет, 5 — пауза
@@ -46,24 +48,40 @@ def window_titled(text):
 
 
 _YT_SEEN = set()  # браузеры, в которых сейчас играет YouTube Music
+_YA_SEEN = set()  # браузеры, в которых сейчас играет Яндекс Музыка
+
+
+def is_yandex_app(low):
+    """Приложение Яндекс Музыки (из Microsoft Store — «…Yandex.Music_…», с сайта — «Яндекс Музыка.exe»),
+    но не Яндекс Браузер: у него в имени тоже «yandex»."""
+    return ("yandex" in low and "music" in low) or ("яндекс" in low and "музык" in low)
 
 
 def source_of(app_id):
-    """Откуда музыка: 'spotify', 'ytmusic' или 'other' (любой другой плеер или обычное видео в браузере)."""
+    """Откуда музыка: 'spotify', 'ytmusic', 'yandex' или 'other' (любой другой плеер или обычное видео в браузере)."""
     low = app_id.lower()
     if "spotify" in low:
         return "spotify"
+    if is_yandex_app(low):
+        return "yandex"
     if "youtube" in low or YT_MUSIC_APP in low:  # отдельные приложения YouTube Music
         return "ytmusic"
     if any(b in low for b in BROWSERS):
-        # вкладку видно по заголовку окна, только пока она активна; ушли на другую вкладку — помним, что это
-        # YouTube Music, пока в браузере не откроют обычный YouTube (тогда играть может уже он)
+        # вкладку видно по заголовку окна, только пока она активна; ушли на другую вкладку — помним, чья это
+        # музыка, пока в браузере не откроют обычный YouTube (тогда играть может уже он)
         if window_titled("youtube music"):
             _YT_SEEN.add(app_id)
-        elif app_id in _YT_SEEN and window_titled("- youtube -"):
+            _YA_SEEN.discard(app_id)
+        elif window_titled("яндекс музыка") or window_titled("yandex music"):
+            _YA_SEEN.add(app_id)
             _YT_SEEN.discard(app_id)
+        elif (app_id in _YT_SEEN or app_id in _YA_SEEN) and window_titled("- youtube -"):
+            _YT_SEEN.discard(app_id)
+            _YA_SEEN.discard(app_id)
         if app_id in _YT_SEEN:
             return "ytmusic"
+        if app_id in _YA_SEEN:
+            return "yandex"
     return "other"
 
 
@@ -74,7 +92,7 @@ def choose(status, chosen, current):
     if chosen in playing:
         return chosen
     if playing:
-        rank = {"spotify": 0, "ytmusic": 1, "other": 2}
+        rank = {"spotify": 0, "ytmusic": 1, "yandex": 1, "other": 2}
         return min(playing, key=lambda a: (rank[source_of(a)], a != current))
     if chosen in status:
         return chosen
@@ -87,9 +105,26 @@ def clean_artist(artist):
     return artist[:-len(" - Topic")] if artist and artist.endswith(" - Topic") else artist
 
 
+def player_uri(source, app=""):
+    """Что открыть, чтобы попасть в плеер: Spotify, YouTube Music или Яндекс Музыку (приложение, если музыка
+    идёт из него и оно умеет открываться по ссылке, иначе сайт)."""
+    if source == "ytmusic":
+        return YT_MUSIC_URL
+    if source == "yandex":
+        if is_yandex_app(app.lower()):
+            try:
+                import winreg
+                winreg.CloseKey(winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, "yandexmusic"))
+                return "yandexmusic://"
+            except OSError:
+                pass
+        return YANDEX_URL
+    return "spotify:"
+
+
 def open_player(state):
     """Открыть тот плеер, что играет (двойной клик по виджету)."""
-    open_uri(YT_MUSIC_URL if state and state.get("source") == "ytmusic" else "spotify:")
+    open_uri(player_uri((state or {}).get("source"), (state or {}).get("app", "")))
 
 
 class Media(QObject):
@@ -164,7 +199,8 @@ class Media(QObject):
             except Exception:
                 self.cover = None
         app = s.source_app_user_model_id.split("!")[-1].replace(".exe", "")
-        if key != self.source_key or self.source != "ytmusic":  # вкладку могли переключить: песня остаётся той же
+        # вкладку могли переключить: песня остаётся той же
+        if key != self.source_key or self.source not in ("ytmusic", "yandex"):
             self.source_key, self.source = key, source_of(s.source_app_user_model_id)
         c = pb.controls
         # Spotify выполняет 🔀 и 🔁, но не сообщает о них — держим то, что включили из виджета,
@@ -235,7 +271,7 @@ def accent(img):
 class PlayerWidget(DesktopWidget):
     key = "player"
     title = tr("Плеер")
-    description = tr("Spotify и YouTube Music: обложка, трек, кнопки")
+    description = tr("Spotify, YouTube Music, Яндекс Музыка: обложка, трек, кнопки")
     liked_ready = Signal(object, object, object)  # (песня, id трека, в любимых?) — из фонового потока
     login_done = Signal(object)                   # None — вошли, иначе текст ошибки
     save_cfg = Signal()                           # записать настройки — в главном потоке
@@ -295,6 +331,8 @@ class PlayerWidget(DesktopWidget):
                     open_uri("spotify:")
                 elif name == "open_yt":
                     open_uri(YT_MUSIC_URL)
+                elif name == "open_ya":
+                    open_uri(player_uri("yandex", "yandex.music"))
                 elif name == "like":
                     self.toggle_like()
                 elif name == "seek":  # клик по полоске — перемотка туда
@@ -440,15 +478,20 @@ class PlayerWidget(DesktopWidget):
             p.setFont(f)
             p.setPen(fg)
             p.drawText(r.adjusted(0, 0, 0, -40), Qt.AlignCenter, tr("Сейчас ничего не играет"))
-            f.setPixelSize(13)
+            f.setPixelSize(12)
             p.setFont(f)
-            for name, text, x0, w0, bg, ink in (("open", "Spotify", r.center().x() - 138, 112, GREEN, QColor("#0b2615")),
-                                                ("open_yt", "YouTube Music", r.center().x() - 18, 156, YT_RED, QColor("white"))):
-                btn = QRectF(x0, r.bottom() - 52, w0, 32)
+            fm, gap, x0 = QFontMetricsF(f), 6, 0.0
+            row = [("open", "Spotify", GREEN, QColor("#0b2615")), ("open_yt", "YouTube Music", YT_RED, QColor("white")),
+                   ("open_ya", tr("Яндекс Музыка"), YA_YELLOW, QColor("#1c1a00"))]
+            widths = [fm.horizontalAdvance(t) + 22 for _, t, _, _ in row]
+            left = r.center().x() - (sum(widths) + gap * (len(row) - 1)) / 2  # три кнопки в ряд, по центру
+            for (name, text, bg, ink), w0 in zip(row, widths):
+                btn = QRectF(left + x0, r.bottom() - 50, w0, 30)
+                x0 += w0 + gap
                 self.buttons[name] = btn
                 p.setPen(Qt.NoPen)
                 p.setBrush(bg)
-                p.drawRoundedRect(btn, 16, 16)
+                p.drawRoundedRect(btn, 15, 15)
                 p.setPen(ink)
                 p.drawText(btn, Qt.AlignCenter, text)
             return

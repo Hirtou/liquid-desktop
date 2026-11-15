@@ -10,8 +10,9 @@ import threading
 import time
 
 from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (QAbstractButton, QFrame, QGraphicsOpacityEffect, QGridLayout, QHBoxLayout, QLabel,
-                               QLineEdit, QSlider, QVBoxLayout, QWidget)
+                               QKeySequenceEdit, QLineEdit, QSlider, QVBoxLayout, QWidget)
 
 from core import ROOT, activity, config
 from lang import LANGS, tr
@@ -239,9 +240,17 @@ class IslandPage(QWidget):
 
         # ---- горячая клавиша
         card, grid = section_card(tr("Горячая клавиша"))
-        hint = QLabel("", objectName="dim", wordWrap=True)
+        self.line = Switch()
+        self.line.toggled.connect(lambda on: self.put("line", bool(on)))
+        row = self.add_row(grid, row, tr("Линия"), self.line, tr("Свёрнутый остров — тонкая полоска вверху экрана. Смахни остров вверх — свернётся в линию, нажми на линию — раскроется. Звонки, уведомления и вопросы помощника всё равно показываются целиком."))
+        self.hotkey = QKeySequenceEdit()
+        self.hotkey.setMaximumSequenceLength(1)
+        self.hotkey.setFixedWidth(180)
+        self.hotkey.editingFinished.connect(self.put_hotkey)
+        row = self.add_row(grid, row, tr("Горячая клавиша"), self.hotkey,
+                           tr("Спрятать / вернуть остров. Щёлкни по полю и нажми новое сочетание: Ctrl, Alt, Shift или Win и латинская буква, цифра или F1–F24."))
+        hint = QLabel(tr("Сочетание не срабатывает — значит, оно занято другой программой: выбери другое."), objectName="dim", wordWrap=True)
         hint.setStyleSheet("font-size: 12px;")
-        self.hotkey_hint = hint
         grid.addWidget(hint, 0, 0, 1, 4)
         lay.addWidget(card)
         lay.addStretch()
@@ -349,6 +358,7 @@ class IslandPage(QWidget):
             self.theme.set_quiet(look["theme"])
             for key, sw in self.shows.items():
                 sw.set_quiet(data.get(key, True))
+            self.line.set_quiet(bool(data.get("line", False)))
         finally:
             self.quiet = False
         for w in self.glass_rows:  # «как у виджетов» — своё стекло не поменять
@@ -356,9 +366,22 @@ class IslandPage(QWidget):
         set_active(self.sliders["fill"][0], not follow and not look["acrylic"])
         self.load_agents()
         self.load_program()
-        keys = (data.get("hotkey") or "ctrl+alt+i").title()
-        self.hotkey_hint.setText(tr("Спрятать / вернуть остров: {}. Сменить сочетание — \"hotkey\" в config.json острова.")
-                                 .format(keys))
+        if not self.hotkey.hasFocus():  # пока набирают новое сочетание — не затирать
+            keys = (data.get("hotkey") or "ctrl+alt+i").lower().replace("win", "meta")
+            self.hotkey.setKeySequence(QKeySequence(keys))
+
+    def put_hotkey(self):
+        """Новое сочетание -> «ctrl+alt+i» в настройки острова (он подхватит сам). Не подошло — вернуть прежнее."""
+        if self.quiet:
+            return
+        text = self.hotkey.keySequence().toString(QKeySequence.PortableText).lower().replace("meta", "win")
+        *mods, key = text.split("+") if text else [""]
+        ok = bool(mods) and all(m in ("ctrl", "alt", "shift", "win") for m in mods) and key.isascii() and (
+            len(key) == 1 and key.isalnum() or key[:1] == "f" and key[1:].isdigit() and 1 <= int(key[1:]) <= 24)
+        if ok:
+            self.cfg.set("hotkey", text)
+        self.hotkey.clearFocus()
+        self.load()
 
     def put(self, key, value):
         if self.quiet:
@@ -477,8 +500,10 @@ class WeatherPage(QWidget):
         grid.addWidget(self.now, 0, 1, 1, 3)
         self.query = QLineEdit(placeholderText=tr("Город или село"))
         self.query.setFixedWidth(280)
+        self.query.setToolTip(tr("Напиши название города или села и нажми Enter"))
         self.query.returnPressed.connect(self.search)
         find = PillButton(tr("Найти"))
+        find.setToolTip(tr("Искать место по названию"))
         find.clicked.connect(self.search)
         grid.addWidget(QLabel(tr("Сменить")), 1, 0)
         grid.addWidget(self.query, 1, 1)
@@ -499,6 +524,7 @@ class WeatherPage(QWidget):
             sw = Switch()
             # как переключатель «один из»: выключить выбранный нельзя — выбирают другой
             sw.toggled.connect(lambda on, n=name: self.set_source(n) if on else QTimer.singleShot(0, self.load))
+            sw.setToolTip(tr("Брать погоду из этого источника"))
             text = label + (tr(" (свой ключ)") if name in W.KEYS else "")
             grid.addWidget(QLabel(text), row, 0)
             grid.addWidget(sw, row, 1, Qt.AlignLeft)

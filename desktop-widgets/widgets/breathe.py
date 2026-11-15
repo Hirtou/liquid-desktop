@@ -10,9 +10,9 @@ from PySide6.QtGui import QColor, QPainter
 from core import DesktopWidget, activity, grid
 from widgets import kit
 
-PHASES = ((4.0, tr("Вдох")), (4.0, tr("Пауза")), (6.0, tr("Выдох")))
+PHASES = ((4.0, tr("Вдох")), (4.0, tr("Пауза")), (7.0, tr("Выдох")))
 CYCLE = sum(sec for sec, _ in PHASES)
-SESSION = 4 * CYCLE  # 56 секунд
+SESSION = 4 * CYCLE  # ровно минута: четыре круга по 15 секунд (выдох длиннее вдоха — так спокойнее)
 TEAL, GREEN = QColor("#2dd4bf"), QColor("#4ade80")
 
 
@@ -75,7 +75,7 @@ class BreatheWidget(DesktopWidget):
         R = min(r.width(), r.height()) * 0.27
         c = QPointF(r.center().x(), r.top() + 14 + R)
         if self.started is None:
-            name, size, big = tr("дыхание"), 0.0, f"0:{SESSION:.0f}"
+            name, size, big = tr("дыхание"), 0.0, "{}:{:02d}".format(*divmod(int(SESSION), 60))
         else:
             name, size, left = breath(time.time() - self.started)
             name, big = name.lower(), str(math.ceil(left))

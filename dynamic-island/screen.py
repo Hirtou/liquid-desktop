@@ -1,10 +1,11 @@
 """Экран через WinAPI: снимок куска экрана под островом (для стекла), «не попадать в снимки», клавиша скриншота,
 что впереди (игра на весь экран). Всё, что трогает снимок, работает и в фоновом потоке."""
 import ctypes
+import threading
 from ctypes import wintypes as wt
 
 import numpy as np
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QImage
 
 user32, gdi32 = ctypes.windll.user32, ctypes.windll.gdi32
@@ -16,6 +17,7 @@ user32.MonitorFromWindow.restype = wt.HANDLE
 user32.MonitorFromWindow.argtypes = [wt.HWND, wt.DWORD]
 user32.GetMonitorInfoW.argtypes = [wt.HANDLE, ctypes.c_void_p]
 user32.SetWindowDisplayAffinity.argtypes = [wt.HWND, wt.DWORD]
+user32.GetWindowDisplayAffinity.argtypes = [wt.HWND, ctypes.POINTER(wt.DWORD)]
 user32.GetForegroundWindow.restype = wt.HWND
 user32.GetClassNameW.argtypes = [wt.HWND, wt.LPWSTR, ctypes.c_int]
 gdi32.CreateCompatibleDC.restype = wt.HDC
@@ -42,8 +44,24 @@ class _MONITORINFO(ctypes.Structure):
 
 
 def exclude_from_capture(hwnd):
-    """Окно не попадает в снимки экрана — значит, можно снимать то, что под ним."""
+    """Окно не попадает в снимки экрана — значит, можно снимать то, что под ним. -> получилось ли
+    (на Windows 10 до версии 2004 такого нет; сразу после входа в систему бывает, что не с первого раза)."""
     user32.SetWindowDisplayAffinity(hwnd, 0x11)  # WDA_EXCLUDEFROMCAPTURE
+    return excluded(hwnd)
+
+
+def excluded(hwnd):
+    """Окна точно нет в снимках экрана?"""
+    mode = wt.DWORD(0)
+    return bool(user32.GetWindowDisplayAffinity(hwnd, ctypes.byref(mode))) and mode.value == 0x11
+
+
+def refresh_timezone():
+    """Часовой пояс сменили (переезд, «летнее время») — Python сам этого не замечает до перезапуска."""
+    try:
+        ctypes.cdll.ucrtbase._tzset()
+    except (OSError, AttributeError):
+        pass
 
 
 def include_in_capture(hwnd):
@@ -91,16 +109,33 @@ def blur(a, r):
     return a
 
 
-def frosted(x, y, w, h, radius=2, vivid=1.35):
-    """Что под окном острова -> размытая маленькая картинка (её растягивает painter). Фоновый поток.
-    radius — размытие в уменьшенной копии (0 — только сглаживание), vivid — сочность цветов."""
+TO_LIGHT, TO_DARK = 0.40, 0.34  # авто-тема: фон светлее — светлая, темнее — тёмная (между — как была)
+
+
+def frosted(x, y, w, h, radius=2, haze=50, theme="dark", prev_dark=True):
+    """Что под окном острова -> (готовое стекло, яркость фона 0..1). Фоновый поток.
+    Маленькая картинка (её растягивает painter); radius — размытие в уменьшенной копии.
+    Цвет считается ровно как у стекла виджетов (их glass.render): та же насыщенность, то же притемнение
+    и та же дымка по «замутнению» — чтобы остров с настройкой «как у виджетов» и выглядел как виджеты.
+    Раньше дымку клал сам остров, своей формулой (не меньше 45% тёмного), и был заметно темнее виджетов."""
     small = grab_small(x, y, w, h, max(8, w // 6), max(4, h // 6)).astype(np.float32) / 255
     if radius > 0:
         small = blur(small, radius)
+    lum = float((small[..., 0] * 0.3 + small[..., 1] * 0.59 + small[..., 2] * 0.11).mean())
+    dark = theme == "dark" if theme in ("dark", "light") else lum < (TO_LIGHT if prev_dark else TO_DARK)
     gray = small.mean(axis=2, keepdims=True)
-    small = np.clip(gray + (small - gray) * vivid, 0, 1)  # сочнее, как акрил
-    out = np.ascontiguousarray((small * 255).astype(np.uint8))
-    return QImage(out.data, out.shape[1], out.shape[0], out.shape[1] * 3, QImage.Format_RGB888).copy()
+    vivid = 0.0 if haze >= 0 else min(1.0, haze / -50)  # замутнение в минусе — цвета сочнее
+    t = max(0, min(100, haze)) / 100
+    if dark:
+        k = 0.95 * t ** 0.9
+        small = (gray + (small - gray) * (0.5 + 0.6 * vivid)) * (0.8 + 0.15 * vivid)
+        small = small * (1 - k) + np.array([0.12, 0.12, 0.14], np.float32) * k
+    else:
+        k = 0.97 * t ** 0.5
+        small = gray + (small - gray) * (1.15 + 0.35 * vivid)
+        small = small * (1 - k) + np.array([0.93, 0.93, 0.95], np.float32) * k
+    out = np.ascontiguousarray((np.clip(small, 0, 1) * 255).astype(np.uint8))
+    return QImage(out.data, out.shape[1], out.shape[0], out.shape[1] * 3, QImage.Format_RGB888).copy(), lum
 
 
 # ---------- что впереди ----------
@@ -146,9 +181,16 @@ user32.CallNextHookEx.restype = ctypes.c_ssize_t
 user32.CallNextHookEx.argtypes = [wt.HHOOK, ctypes.c_int, wt.WPARAM, wt.LPARAM]
 
 
+user32.GetMessageW.argtypes = [ctypes.c_void_p, wt.HWND, wt.UINT, wt.UINT]
+
+
 class _KBD(ctypes.Structure):
     _fields_ = [("vkCode", wt.DWORD), ("scanCode", wt.DWORD), ("flags", wt.DWORD),
                 ("time", wt.DWORD), ("dwExtraInfo", ctypes.c_size_t)]
+
+
+class _KeyRelay(QObject):
+    fired = Signal(object)
 
 
 def watch_screenshot_keys(callback):
@@ -157,18 +199,50 @@ def watch_screenshot_keys(callback):
     def down(vk):
         return user32.GetAsyncKeyState(vk) & 0x8000
 
+    # Перехват живёт в своём потоке со своей очередью сообщений. Windows ждёт его ответа на КАЖДОЕ нажатие
+    # любой клавиши в любой программе: пока он был в главном потоке (рисование, стекло, запуск виджетов),
+    # занятый главный поток задерживал ввод текста во всей системе. Теперь обычная клавиша — одно сравнение
+    # и сразу ответ; главный поток ждём (не дольше 0.3 с) только на самих клавишах скриншота.
+    relay = _KeyRelay()
+
+    def run(done):
+        try:
+            callback()
+        except Exception:
+            pass
+        finally:
+            done.set()
+    relay.fired.connect(run)  # из потока перехвата — в главный (сигнал сам встаёт в очередь)
+
     def proc(code, wparam, lparam):
         if code == 0 and wparam in (WM_KEYDOWN, WM_SYSKEYDOWN):
             vk = ctypes.cast(lparam, ctypes.POINTER(_KBD))[0].vkCode
             if vk == VK_SNAPSHOT or (vk == VK_S and down(VK_SHIFT) and (down(VK_LWIN) or down(VK_RWIN))):
                 try:
-                    callback()
+                    done = threading.Event()
+                    relay.fired.emit(done)
+                    done.wait(0.3)  # окна должны успеть показаться снимку до того, как Windows снимет экран
                 except Exception:
                     pass
         return user32.CallNextHookEx(None, code, wparam, lparam)
 
-    watch_screenshot_keys.proc = _HOOKPROC(proc)  # держим ссылку, иначе сборщик мусора убьёт callback
-    return user32.SetWindowsHookExW(WH_KEYBOARD_LL, watch_screenshot_keys.proc, None, 0)
+    def loop():
+        hook = user32.SetWindowsHookExW(WH_KEYBOARD_LL, watch_screenshot_keys.proc, None, 0)
+        thread = ctypes.windll.kernel32.GetCurrentThreadId()
+
+        def stop():  # при выходе снять перехват: иначе нажатие клавиши могло прийти в уже закрывающийся Python
+            user32.UnhookWindowsHookEx(wt.HHOOK(hook))
+            user32.PostThreadMessageW(thread, 0x0012, 0, 0)  # WM_QUIT — цикл ниже закончится
+        import atexit
+        atexit.register(stop)
+        msg = wt.MSG()
+        while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+            pass
+
+    watch_screenshot_keys.proc = _HOOKPROC(proc)  # держим ссылки, иначе сборщик мусора убьёт callback
+    watch_screenshot_keys.relay = relay
+    threading.Thread(target=loop, daemon=True, name="screenshot-keys").start()
+    return True
 
 
 # ---------- горячая клавиша ----------

@@ -16,6 +16,7 @@ from PySide6.QtGui import (QColor, QCursor, QGuiApplication, QLinearGradient, QP
 from PySide6.QtWidgets import QApplication, QMenu, QWidget
 
 import glass
+from desktop_host import DesktopHost
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(ROOT, "config.json")
@@ -57,6 +58,7 @@ def open_uri(uri):
 STYLE = """
 QLabel {{ color: {fg}; background: transparent; }}
 QLabel#dim {{ color: {dim}; }}
+QToolTip {{ color: #f5f6fb; background: #23252d; border: 1px solid #4a4d5a; padding: 5px 8px; font-size: 12px; }}
 QPlainTextEdit {{ background: {field}; color: {fg}; border: none; border-radius: 12px;
                   padding: 6px; font-size: 14px; }}
 QProgressBar {{ background: {track}; border: none; border-radius: 3px; }}
@@ -118,6 +120,8 @@ def changed(src, last):
 
 
 class Activity:
+    spawned = 0  # сколько новых виджетов уже поставили в центр за этот запуск (лесенка)
+
     """Один общий такт на все виджеты: 30 раз в секунду снимает экран под теми, кому пора
     (одним снимком на монитор), и 4 раза в секунду смотрит, чем занят пользователь."""
 
@@ -136,6 +140,7 @@ class Activity:
         # сколько кадров в работе на каждом мониторе: новый не снимаем, пока старый не готов
         self.inflight = {}
         self.cover = None  # окно впереди (физ. пиксели), если пользователь в окне
+        self.desk_front = False  # впереди сам рабочий стол (Win+D) — виджеты временно «поверх всех»
         self.fs_monitor = None  # монитор игры на весь экран
         self.on_game = None  # началась / закончилась игра на весь экран: on_game(True/False) — подпись в трее
 
@@ -147,6 +152,16 @@ class Activity:
             # точный таймер: обычный в Windows шагает по ~15.6 мс, и 33 мс превращаются в 47
             self.timer = QTimer(interval=33, timeout=self.tick, timerType=Qt.PreciseTimer)
             self.timer.start()
+            # монитор отключили / сменили разрешение — виджеты, оставшиеся за краем, вернуть на экран
+            app = QGuiApplication.instance()
+            app.screenRemoved.connect(self.screens_changed)
+            app.primaryScreenChanged.connect(self.screens_changed)
+            for s in app.screens():
+                s.geometryChanged.connect(self.screens_changed)
+            app.screenAdded.connect(lambda s: s.geometryChanged.connect(self.screens_changed))
+
+    def screens_changed(self, *_):
+        QTimer.singleShot(1500, lambda: [w.keep_on_screen() for w in self.widgets()])  # Windows ещё двигает окна
 
     def widgets(self):
         """Все виджеты. Список окон Qt собирать дорого (окон много: превью каталога, меню), а зовём его
@@ -196,7 +211,8 @@ class Activity:
         idle = now - self.moved > 1.0
         # сам такт: 20 раз в секунду, пока двигается мышь (30 — разницы на размытом стекле не видно, а процессор
         # заметно занят); в покое хватает 5; в игре на весь экран — 4
-        rate = 250 if self.mode == "fullscreen" else 200 if idle else 50
+        moving = idle and any(getattr(w, "streak", 0) >= 2 for w in self.widgets())  # живые обои в движении
+        rate = 250 if self.mode == "fullscreen" else 100 if moving else 200 if idle else 50
         if self.timer.interval() != rate:
             self.timer.setInterval(rate)
         groups = {}
@@ -227,6 +243,11 @@ class Activity:
                 # мышь ожила или сменилось окно впереди — снимок сразу, due сбрасывается)
                 # мышь совсем стоит — раз в секунду и при живых обоях: стекло размыто, разницы с двумя кадрами не видно
                 interval = max(1000 if idle else 500, 500 * (1 + min(7, w.same // 2)))
+                # под стеклом всё время движется (яркие быстрые живые обои): раз в полсекунды-секунду стекло
+                # заметно дёргалось и отставало от обоев. Два снимка подряд разные — смотрим 8 раз в секунду,
+                # пока движение не остановится (одинаковые снимки сразу возвращают редкий опрос)
+                if getattr(w, "streak", 0) >= 2:
+                    interval = 125
             w.due = now + interval / 1000
             args, (win, monitor, *rest) = w._job()
             groups.setdefault(monitor, []).append((w, args, glass.capture_rect(win, *rest)))
@@ -250,7 +271,23 @@ class Activity:
 
     def check(self):
         self.checks += 1
-        if self.checks % 20 == 0:  # раз в ~5 с: не запустили/закрыли живые обои?
+        if self.checks % 20 == 0:  # раз в ~5 с: пояс системы могли сменить; не запустили/закрыли живые обои?
+            glass.refresh_timezone()
+            if not self.editing and config.section("app").get("desktop_child", False):
+                for w in self.widgets():
+                    if w.keep_bottom and w.placed and w.desktop_host is not None and not w.desktop_host.valid():
+                        w.place()  # Проводник перезапускали — вложить заново
+            desk = glass.desktop_window()
+            if desk != getattr(self, "desk", desk):  # ярлыки переехали в другое окно (запустили живые обои) —
+                for w in self.widgets():             # виджеты снова положить прямо над рабочим столом
+                    if w.placed and w.keep_bottom:
+                        if w.pinned:
+                            w.pinned.destroy()
+                            w.pinned = None
+                            w.pin()
+                        else:
+                            w.sync_topmost()
+            self.desk = desk
             wpe = glass.live_wallpaper_running()
             if wpe != self.wpe:
                 self.wpe = wpe
@@ -259,12 +296,44 @@ class Activity:
                         w.place()
         mode = glass.foreground()
         refresh = False
+        # Впереди сам рабочий стол (Win+D, «Свернуть все», клик по пустому столу). На «Показать рабочий стол»
+        # Windows выносит окно рабочего стола НАД всеми обычными окнами — виджеты оказывались под ним
+        # и пропадали. Пока впереди стол, держим виджеты «поверх всех» (так делает и Rainmeter); открыли
+        # любое окно — снова обычные окна прямо над рабочим столом.
+        # Не просто «щёлкнули по пустому столу» (на втором мониторе — окна на первом при этом открыты),
+        # а стол действительно встал НАД виджетами. Поднялись — держим, пока впереди стол
+        # (поднятые, они уже выше стола, и проверка сама по себе сразу отпустила бы их обратно).
+        desk = glass.foreground_class() in glass.DESKTOP_CLASSES
+        if not desk and self.desk_front and not glass.foreground_shown():
+            # После Win+D Windows через секунду-две отдаёт фокус свёрнутому окну (браузеру), хотя его не видно:
+            # раньше виджеты в этот момент опускались — и рабочий стол снова их закрывал. Пока окно впереди
+            # свёрнуто или спрятано, считаем, что впереди всё ещё стол.
+            front = True
+        elif not desk:
+            front = False
+        elif self.desk_front:
+            front = True
+        else:
+            front = any(w.placed and w.keep_bottom and not w.pinned and w.isVisible() and not w.desktop_attached()
+                        and glass.desktop_over(int(w.winId())) for w in self.widgets())
+        if front != self.desk_front:
+            self.desk_front = front
+            for w in self.widgets():
+                if w.placed and w.keep_bottom and not w.pinned and w.isVisible():
+                    w.sync_topmost()
         if mode is not None and mode != self.mode:  # панель задач не меняет режим
             game = (mode == "fullscreen") != (self.mode == "fullscreen")
             self.mode = mode
             refresh = True
             for w in self.widgets():
                 w.set_rate()
+            if mode == "desktop":
+                # «Показать рабочий стол» (Win+D, кнопка в углу панели задач): Windows поднимает рабочий стол
+                # над всеми окнами — и над виджетами тоже, они пропадали. Возвращаем их на место над столом:
+                # сразу и ещё дважды, пока Windows доигрывает своё.
+                self.raise_over_desktop()
+                for delay in (250, 700):
+                    QTimer.singleShot(delay, self.raise_over_desktop)
             if game and self.on_game:
                 self.on_game(mode == "fullscreen")
         if mode == "fullscreen":  # на каком мониторе игра (её могли перетащить — смотрим каждый раз, это дёшево)
@@ -273,10 +342,40 @@ class Activity:
         cover = glass.cover_rect(glass.user32.GetForegroundWindow()) if self.mode == "window" else None
         if cover != self.cover or refresh:
             self.cover = cover
+            self.changed_at = now = time.monotonic()
+            # Окно свернули — впереди снова рабочий стол. Но Windows сворачивает с анимацией (~0.3 с), и снимок
+            # в этот момент ловит ещё тёмное окно: виджеты на полсекунды становились тёмными («свернул браузер —
+            # и тут такое, потом исчезает»). Поэтому сразу ставим стекло, которое было над чистым столом в прошлый
+            # раз, а переснимаем, когда анимация закончится.
+            to_desk = self.mode == "desktop"
             for w in self.widgets():  # открылись — сразу свежий кадр и стекло, а не то, что было до окна
                 if w.isVisible():
-                    w.due, w.same = 0.0, 0
+                    saved = getattr(w, "desk_glass", None) if to_desk and not w.on_top() else None
+                    if saved is not None and saved[1].size() == w.card().size():
+                        w.gen += 1  # снимки, заказанные раньше (с окном в кадре), отбросятся
+                        w.apply((w.gen, saved))
+                        w.due, w.same = now + 0.35, 0
+                    else:
+                        w.due, w.same = 0.0, 0
                     w.update()
+            for delay in (420, 800):  # и ещё раз после анимации — на случай, если она шла дольше
+                QTimer.singleShot(delay, self.refresh_glass)
+
+    def raise_over_desktop(self):
+        if self.mode != "desktop" or self.editing:
+            return
+        for w in self.widgets():
+            if w.placed and w.keep_bottom and not w.pinned:
+                if not w.isVisible():
+                    w.show()
+                w.sync_topmost()
+
+    def refresh_glass(self):
+        """Всем видимым виджетам — свежий снимок под стеклом прямо сейчас."""
+        for w in self.widgets():
+            if w.isVisible():
+                w.due, w.same = 0.0, 0
+        self.tick()
 
     def covered(self, w):
         """Виджета сейчас не видно: игра на весь экран или окно впереди закрывает его целиком.
@@ -366,11 +465,11 @@ class DesktopWidget(QWidget):
         self.apply_flags()
         self.set_dark(False)
         if "x" not in self.cfg:
-            # первый раз — справа (ярлыки обычно слева), лесенкой, чтобы не налезали друг на друга
-            g = QGuiApplication.primaryScreen().availableGeometry()
-            n = sum(1 for v in config.data.values() if isinstance(v, dict) and "x" in v)
-            self.cfg["x"], self.cfg["y"] = g.right() - 420 - (n % 3) * 60, g.top() + 40 + (n % 5) * 70
-        self.move(self.cfg["x"], self.cfg["y"])
+            # первый раз — по центру главного экрана, где его сразу видно (окончательный размер виджет узнает
+            # позже — тогда и доцентрируется, см. center_new); каждый следующий новый — чуть ниже и правее,
+            # чтобы два только что включённых не легли ровно друг на друга
+            self.new_spot = True
+        self.move(self.cfg.get("x", 0), self.cfg.get("y", 0))
 
         # свет под курсором
         self.hover = QTimer(self, interval=33, timeout=self.update)
@@ -386,9 +485,66 @@ class DesktopWidget(QWidget):
         self.pinned = None
         self.flat_key = None
         self.placed = False  # виджет включён и разложен (place)
+        self.desktop_host = None  # внутри рабочего стола (app.desktop_child) — см. desktop_host.py
         self.push_timer = QTimer(self, interval=1000, timeout=self.push)
 
     # ---------- окно ----------
+
+    def desktop_attached(self):
+        host = getattr(self, "desktop_host", None)  # move() зовут и из __init__, до появления host
+        return bool(host and host.attached)
+
+    def pos(self):
+        if self.desktop_attached():
+            return self.desktop_host.global_pos()
+        return QWidget.pos(self)
+
+    def x(self):
+        return self.pos().x()
+
+    def y(self):
+        return self.pos().y()
+
+    def move(self, *args):
+        if self.desktop_attached():
+            self.desktop_host.move_global(QPoint(args[0]) if len(args) == 1 else QPoint(args[0], args[1]))
+        else:
+            QWidget.move(self, *args)
+
+    def frameGeometry(self):
+        if self.desktop_attached():
+            return QRect(self.pos(), self.size())
+        return QWidget.frameGeometry(self)
+
+    def ensure_desktop(self):
+        """Вложить в рабочий стол (если включено). -> вложен ли сейчас."""
+        if not self.keep_bottom or not self.placed or activity.editing \
+                or not config.section("app").get("desktop_child", False):
+            return False
+        if self.desktop_host is None:
+            self.desktop_host = DesktopHost(self)
+        if not self.desktop_host.attached:
+            self.push_timer.stop()
+            if self.pinned:
+                self.pinned.destroy()
+                self.pinned = None
+            self.apply_flags()  # снять «поверх всех» от «Двигать виджеты» до того, как вкладывать
+        was_valid, old_peer = self.desktop_host.valid(), self.desktop_host.peer
+        self.desktop_host.attach(activity.under_icons)
+        if self.desktop_host.valid():
+            if not was_valid or old_peer != self.desktop_host.peer:
+                self.gen = max(self.gen, self.shown_gen) + 1  # кадры, заказанные до смены — отбросить
+                self.shown_gen = self.gen
+                self.last_src = None
+                self.flat_key = None
+                self.live = False
+                self.apply_backdrop()
+                self.setup_capture()
+            return True
+        position = self.desktop_host.global_pos() if self.desktop_host.attached else self.pos()
+        self.desktop_host.detach()
+        QWidget.move(self, position)
+        return False
 
     def on_top(self):
         """Окно виджета поверх всего — только пока «Двигать виджеты»; обычно виджет вшит под ярлыки."""
@@ -401,14 +557,42 @@ class DesktopWidget(QWidget):
         иначе — под ярлыки, как обои. С живыми обоями (Wallpaper Engine) под ярлыками ничего не видно
         (их видео закрывает) — тогда тоже обычное окно, чтобы виджеты не пропадали."""
         self.placed = True
-        if activity.editing or not activity.under_icons or activity.wpe:
+        if activity.editing:
+            if self.desktop_host:
+                self.desktop_host.detach()
+            self.unpin()
+        elif self.ensure_desktop():
+            pass  # внутри рабочего стола (app.desktop_child)
+        elif not activity.under_icons or activity.wpe:
             self.unpin()
         else:
             self.pin()
+        QTimer.singleShot(0, self.center_new)  # под ярлыками окно скрыто — showEvent не придёт
+        QTimer.singleShot(0, self.keep_on_screen)
 
     def nativeEvent(self, event_type, message):
+        if self.desktop_attached():  # внутри рабочего стола: свой фокус для полей ввода, порядком окон не командуем
+            self.desktop_host.native_focus(wt.MSG.from_address(int(message)).message)
+            return super().nativeEvent(event_type, message)
+        if wt.MSG.from_address(int(message)).message == 0x001E:  # WM_TIMECHANGE: перевели часы или сменили пояс
+            glass.refresh_timezone()
+            self.update()
         # не поверх окон: что бы ни делали (клик, перетаскивание), окно остаётся в самом низу
-        if self.keep_bottom and not activity.editing and not self.pinned:
+        if self.keep_bottom and not activity.editing and not self.pinned and activity.desk_front:
+            # Впереди сам рабочий стол (Win+D) — встаём «поверх всех». Сами, и сообщение Qt не отдаём:
+            # у окна «всегда снизу» Qt тут же меняет «поверх всех» обратно на «в самый низ», и виджет
+            # оставался под рабочим столом.
+            msg = wt.MSG.from_address(int(message))
+            if msg.message == 0x0046:  # WM_WINDOWPOSCHANGING
+                pos = glass.WINDOWPOS.from_address(msg.lParam)
+                pos.hwndInsertAfter = -1  # HWND_TOPMOST
+                pos.flags &= ~0x0004      # без SWP_NOZORDER
+                return True, 0
+        if getattr(self, "_dropping", False):  # первый шаг «снять поверх всех» — пропускаем как есть, мимо Qt
+            msg = wt.MSG.from_address(int(message))
+            if msg.message == 0x0046:
+                return True, 0
+        if self.keep_bottom and not activity.editing and not self.pinned and not activity.desk_front:
             msg = wt.MSG.from_address(int(message))
             if msg.message == 0x0046:  # WM_WINDOWPOSCHANGING
                 pos = glass.WINDOWPOS.from_address(msg.lParam)
@@ -437,11 +621,21 @@ class DesktopWidget(QWidget):
     def sync_topmost(self):
         """Поверх всех окон — сами: Qt при смене флага у окна-инструмента «поверх» в Windows не ставит
         (флаг Qt есть, WS_EX_TOPMOST нет — «Двигать виджеты» не поднимал их над окнами)."""
-        if not self.isVisible() or self.pinned:
+        if not self.isVisible() or self.pinned or self.desktop_attached():
             return
         # -1 — поверх всех, -2 — снять «поверх всех»; дальше nativeEvent сам опустит виджет к рабочему столу
-        glass.user32.SetWindowPos(int(self.winId()), wt.HWND(-1 if self.on_top() else -2), 0, 0, 0, 0,
+        top = self.on_top() or (self.keep_bottom and activity.desk_front)
+        hwnd = int(self.winId())
+        was_top = bool(glass.user32.GetWindowLongW(hwnd, -20) & 0x8)  # WS_EX_TOPMOST
+        self._dropping = was_top and not top
+        glass.user32.SetWindowPos(hwnd, wt.HWND(-1 if top else -2), 0, 0, 0, 0,
                                   0x0001 | 0x0002 | 0x0010)  # без сдвига, размера и активации
+        if self._dropping:
+            # Сняли «поверх всех» — Windows кладёт окно на верх обычных окон, то есть над открытым окном
+            # (виджет висел поверх браузера после Win+D). Вторым шагом опускаем к рабочему столу.
+            self._dropping = False
+            if self.keep_bottom and not self.on_top():
+                glass.user32.SetWindowPos(hwnd, wt.HWND(1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)
 
     # ---------- под ярлыками ----------
 
@@ -566,11 +760,51 @@ class DesktopWidget(QWidget):
             return True
         return super().event(e)
 
+    def keep_on_screen(self):
+        """Виджет остался за краем экрана (отключили второй монитор, уменьшили разрешение) — его не видно
+        и не достать. Вернуть на главный экран, к ближайшему краю."""
+        if getattr(self, "preview", False) or not self.keep_bottom or not self.placed:
+            return
+        card = self.card_on_screen()
+        for s in QGuiApplication.screens():
+            seen = s.geometry().intersected(card)
+            if seen.width() >= 48 and seen.height() >= 48:
+                return
+        g = QGuiApplication.primaryScreen().availableGeometry()
+        dx = max(g.left() + GAP - card.left(), 0) + min(g.right() - GAP - card.right(), 0)
+        dy = max(g.top() + GAP - card.top(), 0) + min(g.bottom() - GAP - card.bottom(), 0)
+        self.move(self.pos() + QPoint(dx, dy))
+        self.cfg["x"], self.cfg["y"] = self.x(), self.y()
+        config.save()
+        if self.pinned:
+            self.push()
+
+    def center_new(self):
+        """Новый виджет — в центр главного экрана (уже зная свой размер), и запомнить место."""
+        if not getattr(self, "new_spot", False) or getattr(self, "preview", False):
+            return
+        self.new_spot = False
+        g = QGuiApplication.primaryScreen().availableGeometry()
+        step = 36 * (Activity.spawned % 5)  # подряд включённые — лесенкой
+        Activity.spawned += 1
+        x = g.center().x() - self.width() // 2 + step
+        y = g.center().y() - self.height() // 2 + step
+        self.move(max(g.left(), min(x, g.right() - self.width())), max(g.top(), min(y, g.bottom() - self.height())))
+        self.cfg["x"], self.cfg["y"] = self.x(), self.y()
+        config.save()
+        if self.pinned:
+            self.push()
+
     def showEvent(self, event):
         super().showEvent(event)
         activity._widgets = None  # список виджетов — собрать заново
+        QTimer.singleShot(0, self.center_new)
+        QTimer.singleShot(0, self.keep_on_screen)
         self.setup_capture()
         self.sync_topmost()
+        if getattr(self, "_skip_fade", False) or self.desktop_attached():
+            self._skip_fade = False
+            return
         self.setWindowOpacity(0)
         self.fade = QPropertyAnimation(self, b"windowOpacity", self, duration=260, startValue=0.0, endValue=1.0)
         self.fade.start()
@@ -657,6 +891,12 @@ class DesktopWidget(QWidget):
         поэтому зовём при каждом показе."""
         hwnd = int(self.winId())
         app = config.section("app")
+        if self.desktop_attached():  # ребёнок рабочего стола не прячется от снимков — стекло из обоев
+            self.live = False
+            self.set_rate()
+            self.last_src = None
+            self.rebuild()
+            return
         if self.flat_mode() or (app.get("on_screenshots") and not app.get("acrylic", True)):
             glass.include_in_capture(hwnd)
             self.live = False
@@ -670,6 +910,8 @@ class DesktopWidget(QWidget):
         """Стекло без снимков экрана: при системном акриле (размывает сама Windows) или под живыми обоями
         (их видео просвечивает сквозь полупрозрачное окно). Сверху — наша тонировка с заливкой."""
         app = config.section("app")
+        if self.desktop_attached():
+            return False
         if self.keep_bottom and app.get("system_acrylic", False):
             return True
         if app.get("acrylic", True) and not self.pinned:
@@ -683,7 +925,7 @@ class DesktopWidget(QWidget):
         app = config.section("app")
         # системный акрил Windows скругляет углы только на 8 px (у карточки 26) — по умолчанию выключен
         want = self.keep_bottom and app.get("system_acrylic", False) and not self.pinned and self.isVisible() \
-            and not self.isMinimized()
+            and not self.isMinimized() and not self.desktop_attached()
         bd = getattr(self, "_bd", None)
         if not want:
             if bd:
@@ -740,6 +982,9 @@ class DesktopWidget(QWidget):
     def rebuild_now(self):
         """Посчитать сразу — при перетаскивании, чтобы стекло не отставало от окна."""
         if self.isVisible() and not self.snapping():
+            if self.flat_mode():  # сплошное стекло (окно настроек, изморозь) от места не зависит
+                self.update_flat()
+                return
             self.apply(self._compute(*self._job()))
 
     def _work(self, args, how):
@@ -763,10 +1008,20 @@ class DesktopWidget(QWidget):
         gen, payload = result
         if gen < self.shown_gen:  # пока считалось, уже показали стекло новее
             return
+        if self.flat_mode():
+            # Окну со сплошным стеклом (настройки) живое стекло не нужно. Раньше при перетаскивании окна сюда
+            # всё равно приходило стекло «из обоев» и подменяло сплошное: окно настроек становилось то
+            # прозрачным, то матовым.
+            return
         self.same = 0 if payload else self.same + 1
+        self.streak = getattr(self, "streak", 0) + 1 if payload else 0  # сколько снимков подряд фон менялся
         if payload:
             self.shown_gen = gen
             self.last_src, self.glass_img, dark = payload
+            # стекло над чистым рабочим столом (впереди ничего нет и уже секунду ничего не менялось) —
+            # запоминаем: его покажем сразу, когда окно свернут (см. Activity.check)
+            if activity.mode == "desktop" and time.monotonic() - getattr(activity, "changed_at", 0.0) > 1.0:
+                self.desk_glass = payload
             self.lum = glass.luminance(self.last_src)
             self.theme_mem[round(self.lum * 20)] = dark
             card = self.card()
@@ -1029,6 +1284,11 @@ class DesktopWidget(QWidget):
         self.rebuild()
 
     def closeEvent(self, event):
+        # Закрыть виджет «снаружи» (Alt+F4, когда фокус на виджете, особенно внутри рабочего стола) — нельзя:
+        # виджет пропадал без следа (в журнале — «закрыт виджет analog»). Выключают его в каталоге или «Скрыть».
+        if self.keep_bottom and event.spontaneous() and not QApplication.closingDown()                 and not getattr(self, "preview", False):
+            event.ignore()
+            return
         self.placed = False
         activity._widgets = None
         if getattr(self, "_bd", None):

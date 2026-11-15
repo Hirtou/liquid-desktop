@@ -8,13 +8,15 @@
 from lang import tr
 import ctypes
 import os
+import threading
+import time
 import winreg
 from ctypes import wintypes as wt
 from functools import lru_cache
 
 import numpy as np
 import psutil
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QColor, QImage
 
 PAD = 40          # запас вокруг карточки для размытия и преломления
@@ -68,6 +70,22 @@ def exclude_from_capture(hwnd):
 def include_in_capture(hwnd):
     """Окно снова видно на скриншотах (и в нашем снимке экрана тоже)."""
     user32.SetWindowDisplayAffinity(hwnd, 0)  # WDA_NONE
+
+
+def refresh_timezone():
+    """Часовой пояс сменили (переезд, «летнее время») — Python сам этого не замечает до перезапуска,
+    и часы показывали время старого пояса."""
+    try:
+        ctypes.cdll.ucrtbase._tzset()
+    except (OSError, AttributeError):
+        pass
+
+
+def boot_seconds():
+    """Сколько секунд прошло с включения компьютера."""
+    kernel32 = ctypes.windll.kernel32
+    kernel32.GetTickCount64.restype = ctypes.c_ulonglong
+    return kernel32.GetTickCount64() / 1000
 
 
 # ---------- системный акрил Windows ----------
@@ -165,11 +183,16 @@ user32.SetWindowsHookExW.argtypes = [ctypes.c_int, _HOOKPROC, wt.HINSTANCE, wt.D
 user32.CallNextHookEx.restype = ctypes.c_ssize_t
 user32.CallNextHookEx.argtypes = [wt.HHOOK, ctypes.c_int, wt.WPARAM, wt.LPARAM]
 user32.GetAsyncKeyState.restype = ctypes.c_short
+user32.GetMessageW.argtypes = [ctypes.c_void_p, wt.HWND, wt.UINT, wt.UINT]
 
 
 class _KBD(ctypes.Structure):
     _fields_ = [("vkCode", wt.DWORD), ("scanCode", wt.DWORD), ("flags", wt.DWORD),
                 ("time", wt.DWORD), ("dwExtraInfo", ctypes.c_size_t)]
+
+
+class _KeyRelay(QObject):
+    fired = Signal(object)
 
 
 def watch_screenshot_keys(callback):
@@ -179,18 +202,50 @@ def watch_screenshot_keys(callback):
     def down(vk):
         return user32.GetAsyncKeyState(vk) & 0x8000
 
+    # Перехват живёт в своём потоке со своей очередью сообщений. Windows ждёт его ответа на КАЖДОЕ нажатие
+    # любой клавиши в любой программе: пока он был в главном потоке (рисование, стекло, запуск виджетов),
+    # занятый главный поток задерживал ввод текста во всей системе. Теперь обычная клавиша — одно сравнение
+    # и сразу ответ; главный поток ждём (не дольше 0.3 с) только на самих клавишах скриншота.
+    relay = _KeyRelay()
+
+    def run(done):
+        try:
+            callback()
+        except Exception:
+            pass
+        finally:
+            done.set()
+    relay.fired.connect(run)  # из потока перехвата — в главный (сигнал сам встаёт в очередь)
+
     def proc(code, wparam, lparam):
         if code == 0 and wparam in (WM_KEYDOWN, WM_SYSKEYDOWN):
             vk = ctypes.cast(lparam, ctypes.POINTER(_KBD))[0].vkCode
             if vk == VK_SNAPSHOT or (vk == VK_S and down(VK_SHIFT) and (down(VK_LWIN) or down(VK_RWIN))):
                 try:
-                    callback()
+                    done = threading.Event()
+                    relay.fired.emit(done)
+                    done.wait(0.3)  # окна должны успеть показаться снимку до того, как Windows снимет экран
                 except Exception:
                     pass
         return user32.CallNextHookEx(None, code, wparam, lparam)
 
-    watch_screenshot_keys.proc = _HOOKPROC(proc)  # держим ссылку, иначе сборщик мусора убьёт callback
-    return user32.SetWindowsHookExW(WH_KEYBOARD_LL, watch_screenshot_keys.proc, None, 0)
+    def loop():
+        hook = user32.SetWindowsHookExW(WH_KEYBOARD_LL, watch_screenshot_keys.proc, None, 0)
+        thread = ctypes.windll.kernel32.GetCurrentThreadId()
+
+        def stop():  # при выходе снять перехват: иначе нажатие клавиши могло прийти в уже закрывающийся Python
+            user32.UnhookWindowsHookEx(wt.HHOOK(hook))
+            user32.PostThreadMessageW(thread, 0x0012, 0, 0)  # WM_QUIT — цикл ниже закончится
+        import atexit
+        atexit.register(stop)
+        msg = wt.MSG()
+        while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+            pass
+
+    watch_screenshot_keys.proc = _HOOKPROC(proc)  # держим ссылки, иначе сборщик мусора убьёт callback
+    watch_screenshot_keys.relay = relay
+    threading.Thread(target=loop, daemon=True, name="screenshot-keys").start()
+    return True
 
 
 def window_rect(hwnd):
@@ -231,6 +286,27 @@ user32.GetWindowThreadProcessId.argtypes = [wt.HWND, ctypes.POINTER(wt.DWORD)]
 DESKTOP_CLASSES = {"Progman", "WorkerW"}
 SHELL_CLASSES = {"Shell_TrayWnd", "Shell_SecondaryTrayWnd", "NotifyIconOverflowWindow",
                  "TopLevelWindowForOverflowXamlIsland", "XamlExplorerHostIslandWindow"}
+
+
+def foreground_class():
+    """Класс окна впереди — в журнал: по нему видно, что именно приняли за игру на весь экран."""
+    buf = ctypes.create_unicode_buffer(256)
+    user32.GetClassNameW(user32.GetForegroundWindow(), buf, 256)
+    return buf.value
+
+
+def foreground_shown():
+    """Окно впереди действительно видно: не свёрнуто, не спрятано системой, не крошечное."""
+    hwnd = user32.GetForegroundWindow()
+    if not hwnd or not user32.IsWindowVisible(hwnd) or user32.IsIconic(hwnd):
+        return False
+    cloak = wt.DWORD(0)
+    ctypes.windll.dwmapi.DwmGetWindowAttribute(wt.HWND(hwnd), 14, ctypes.byref(cloak), 4)
+    if cloak.value:
+        return False
+    r = wt.RECT()
+    user32.GetWindowRect(hwnd, ctypes.byref(r))
+    return r.right - r.left > 50 and r.bottom - r.top > 50
 
 
 def foreground():
@@ -695,8 +771,14 @@ user32.GetWindow.argtypes = [wt.HWND, wt.UINT]
 
 def desktop_window():
     """Окно рабочего стола верхнего уровня — то, в котором ярлыки (Progman или WorkerW)."""
-    h = _desktop["hwnd"]
-    if h and user32.IsWindow(h):
+    # Запоминаем ненадолго и перепроверяем, что ярлыки всё ещё в этом окне: когда запускаются живые обои
+    # (Wallpaper Engine, Lively), Windows до 24H2 переносит ярлыки из Progman в отдельное окно WorkerW,
+    # а обои кладёт между ними. Со старым окном в памяти виджеты вставали ПОД обои — и пропадали.
+    h, now = _desktop["hwnd"], time.monotonic()
+    if h and now - _desktop.get("at", 0.0) < 1.0:
+        return h
+    _desktop["at"] = now
+    if h and user32.IsWindow(h) and user32.FindWindowExW(h, None, "SHELLDLL_DefView", None):
         return h
     defview = icons_layer()
     h = None
@@ -708,6 +790,20 @@ def desktop_window():
         defview = parent
     _desktop["hwnd"] = h or user32.FindWindowW("Progman", None)
     return _desktop["hwnd"]
+
+
+def desktop_over(hwnd):
+    """Рабочий стол выше окна hwnd в стопке (его закрыл стол: Win+D, «Свернуть все»)?
+    Простой клик по пустому столу стол наверх не выносит — тогда False."""
+    desk = desktop_window()
+    if not desk:
+        return False
+    x, n = user32.GetWindow(hwnd, 2), 0  # GW_HWNDNEXT — кто ниже нас
+    while x and n < 5000:
+        if int(x) == int(desk):
+            return False  # стол под нами — всё в порядке
+        x, n = user32.GetWindow(x, 2), n + 1
+    return True
 
 
 def above_desktop(own):
@@ -732,6 +828,15 @@ def live_wallpaper_running():
         if (p.info["name"] or "").lower() in ("wallpaper32.exe", "wallpaper64.exe"):
             return True
     return False
+
+
+def icon_list(defview):
+    """Список ярлыков внутри слоя рабочего стола (лежит на весь стол)."""
+    return user32.FindWindowExW(defview, None, "SysListView32", None) if defview else None
+
+
+user32.AttachThreadInput.argtypes = [wt.DWORD, wt.DWORD, wt.BOOL]
+user32.SetFocus.argtypes = [wt.HWND]
 
 
 def icons_layer():

@@ -124,6 +124,9 @@ class Cache:
                 pass
 
 
+_LAYOUTS = {}  # раскладки текущих строк (см. _karaoke)
+
+
 class LyricsWidget(DesktopWidget):
     key = "lyrics"
     title = tr("Слова песни")
@@ -197,8 +200,13 @@ class LyricsWidget(DesktopWidget):
             return  # пока искали, песня сменилась
         if found == "error":  # база не ответила (бывает 503) — через 15 с ещё раз, если песня та же
             self.status = "error"
-            QTimer.singleShot(15000, lambda s=song: self.load(s, (self.state or {}).get("duration"))
-                              if s == self.song and self.status == "error" else None)
+            # таймер — дочерний: виджет закрыли за эти 15 с — он умрёт вместе с ним (иначе load() трогал
+            # уже удалённое окно — RuntimeError «already deleted»)
+            again = QTimer(self, singleShot=True, interval=15000)
+            again.timeout.connect(lambda s=song: self.load(s, (self.state or {}).get("duration"))
+                                  if s == self.song and self.status == "error" else None)
+            again.timeout.connect(again.deleteLater)
+            again.start()
         elif not found or found.get("none") or not (found["synced"] or found["plain"] or found["instrumental"]):
             self.status = "none"
         else:
@@ -426,6 +434,11 @@ class LyricsWidget(DesktopWidget):
             y = (DOTS_H / 2 if self.index < 0 else self.anchor_of(self.index)) + shift
             self._dots(q, QPointF(14, y), fg)
         fill = self.karaoke()
+        # Кегль у всех строк один (крупный), а размер меняем масштабом рисования. Раньше строка росла, меняя
+        # кегль по пикселю (15 → 21): на каждом шаге перенос слов считался заново, и пока строка подъезжала,
+        # слова прыгали со строчки на строчку — «первые слова дёргаются».
+        font = QFont("Segoe UI Semibold")
+        font.setPixelSize(BIG)
         for i, text in enumerate(lines):
             top, h = slots[i]
             y = top + shift
@@ -434,37 +447,68 @@ class LyricsWidget(DesktopWidget):
             if not text.strip() or text.strip() == "♪":
                 continue  # пауза: на её месте точки (если она сейчас)
             near = max(0.0, 1 - abs((top + h / 2) - self.offset) / 70)  # 1 — строка у якоря
-            font = QFont("Segoe UI Semibold")
-            font.setPixelSize(int(round(SMALL + (BIG - SMALL) * near)))
+            k = (SMALL + (BIG - SMALL) * near) / BIG
             past, current = i < self.index, i == self.index
             dimc = QColor(fg)
             dimc.setAlpha(80 if past else 125)
+            q.save()
+            q.translate(0, y + h / 2)  # растём от левого края и середины строки
+            q.scale(k, k)
+            q.translate(0, -(y + h / 2))
             if current and fill is not None:  # заливка: спетое — ярко, мягкий переход, впереди — бледно
                 self._karaoke(q, text, font, QRectF(0, y, width, h), fill, fg, dimc)
-                continue
-            col = QColor(fg) if current else dimc
-            q.setFont(font)
-            q.setPen(col)
-            q.drawText(QRectF(0, y, width, h), Qt.AlignLeft | Qt.AlignVCenter | Qt.TextWordWrap, text)
+            else:  # готовая картинка строки, бледность — прозрачностью (то же, что цвет с альфой)
+                q.setOpacity(1.0 if current else dimc.alphaF())
+                q.drawPixmap(QPointF(0, y), self._line_pix(text, width, h, fg, font, q.device().devicePixelRatioF()))
+            q.restore()
+
+    def _line_pix(self, text, width, h, fg, font, dpr):
+        """Строка текста картинкой. Раскладывать текст с переносом и рисовать его заново 30 раз в секунду
+        (пока песня играет) — это было больше четверти всей работы программы; строка же не меняется,
+        меняются только её место, размер и бледность. Рисуем один раз, дальше копируем."""
+        cache = self.__dict__.setdefault("_pix", {})
+        key = (text, int(width), round(h, 1), fg.rgba(), round(dpr, 3))
+        pm = cache.get(key)
+        if pm is None:
+            if len(cache) > 160:  # другая песня, другой размер — старое не копим
+                cache.clear()
+            pm = QPixmap(max(1, int(width * dpr) + 1), max(1, int(h * dpr) + 1))
+            pm.setDevicePixelRatio(dpr)
+            pm.fill(Qt.transparent)
+            p = QPainter(pm)
+            p.setRenderHints(QPainter.Antialiasing | QPainter.TextAntialiasing)
+            p.setFont(font)
+            p.setPen(QColor(fg))
+            p.drawText(QRectF(0, 0, width, h), Qt.AlignLeft | Qt.AlignVCenter | Qt.TextWordWrap, text)
+            p.end()
+            cache[key] = pm
+        return pm
 
     @staticmethod
     def _karaoke(q, text, font, rect, fill, bright, dim):
         """Текст с переносом (QTextLayout), каждая строчка — градиентом: до точки пения ярко, дальше бледно."""
-        lay = QTextLayout(text, font)
-        opt = QTextOption()
-        opt.setWrapMode(QTextOption.WordWrap)
-        lay.setTextOption(opt)
-        lay.beginLayout()
-        rows, y = [], 0.0
-        while True:
-            line = lay.createLine()
-            if not line.isValid():
-                break
-            line.setLineWidth(rect.width())
-            line.setPosition(QPointF(0, y))
-            rows.append(line)
-            y += line.height()
-        lay.endLayout()
+        key = (text, round(rect.width(), 1), font.pixelSize())
+        hit = _LAYOUTS.get(key)
+        if hit is None:  # раскладка строки не меняется, пока её поют, — считаем один раз, а не каждый кадр
+            lay = QTextLayout(text, font)
+            opt = QTextOption()
+            opt.setWrapMode(QTextOption.WordWrap)
+            lay.setTextOption(opt)
+            lay.beginLayout()
+            rows, y = [], 0.0
+            while True:
+                line = lay.createLine()
+                if not line.isValid():
+                    break
+                line.setLineWidth(rect.width())
+                line.setPosition(QPointF(0, y))
+                rows.append(line)
+                y += line.height()
+            lay.endLayout()
+            if len(_LAYOUTS) > 24:
+                _LAYOUTS.clear()
+            hit = _LAYOUTS[key] = (lay, rows, y)  # lay держим: строки живут, пока жива раскладка
+        lay, rows, y = hit
         top = rect.top() + (rect.height() - y) / 2
         total = sum(l.naturalTextWidth() for l in rows) or 1
         left = fill * total  # сколько «пройдено» по всей строке, px

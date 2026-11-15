@@ -6,9 +6,11 @@ import time
 import winsound
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
-from PySide6.QtGui import QColor, QConicalGradient, QFont, QPainter, QPen
+from PySide6.QtGui import QColor, QFont, QPainter, QPen
+from PySide6.QtWidgets import QInputDialog, QMessageBox
 
 from core import DesktopWidget, SHADOW, config, grid
+from widgets import kit
 
 BLUE, CYAN, RED = QColor("#2f6bff"), QColor("#36c6ff"), QColor("#ff5a5f")
 PRESETS = (1, 3, 5, 10, 15, 25, 45, 60)
@@ -69,7 +71,8 @@ class TimerWidget(DesktopWidget):
         if self.running():
             self.cfg["end"] += minutes * 60
         else:
-            self.cfg["duration"] = max(60, min(24 * 3600, self.cfg["duration"] + minutes * 60))
+            # своё время бывает и короче минуты — колесо и «+» не дают уйти ниже 5 секунд
+            self.cfg["duration"] = max(5, min(24 * 3600, self.cfg["duration"] + minutes * 60))
             self.cfg.pop("left", None)
         self.done_at = None
         self.save()
@@ -115,6 +118,33 @@ class TimerWidget(DesktopWidget):
         presets = menu.addMenu(tr("Время"))
         for m in PRESETS:
             presets.addAction(tr("{} мин").format(m), lambda m=m: self.set_preset(m))
+        presets.addSeparator()
+        presets.addAction(tr("Своё время…"), self.ask_time)
+
+    def ask_time(self):
+        """Своё время: минуты («7», «1,5») или мин:сек («2:30»), можно и ч:мин:сек. От 5 секунд до суток."""
+        now = int(self.cfg["duration"])
+        text, ok = QInputDialog.getText(None, tr("Таймер"), tr("Сколько? Минуты или мин:сек — например 7 или 2:30"),
+                                        text=f"{now // 60}:{now % 60:02d}" if now % 60 else str(now // 60))
+        if not ok or not text.strip():
+            return
+        try:
+            parts = [float(x.replace(",", ".")) for x in text.strip().split(":")]
+            if len(parts) == 1:
+                seconds = parts[0] * 60
+            elif len(parts) == 2:
+                seconds = parts[0] * 60 + parts[1]
+            elif len(parts) == 3:
+                seconds = parts[0] * 3600 + parts[1] * 60 + parts[2]
+            else:
+                raise ValueError(text)
+            if not 5 <= seconds <= 24 * 3600:
+                raise ValueError(text)
+        except ValueError:
+            QMessageBox.information(None, tr("Таймер"), tr("Не понял время. Напиши минуты (7) или мин:сек (2:30)."))
+            return
+        self.cfg["duration"] = int(round(seconds))
+        self.reset()
 
     # ---------- рисование ----------
 
@@ -145,9 +175,7 @@ class TimerWidget(DesktopWidget):
             p.setPen(QPen(red, 11, Qt.SolidLine, Qt.RoundCap))
             p.drawEllipse(c, R, R)
         elif frac > 0:
-            grad = QConicalGradient(c, 90)
-            grad.setColorAt(0, CYAN)
-            grad.setColorAt(1, BLUE)
+            grad = kit.ring_brush(c, CYAN, BLUE, frac)
             p.setPen(QPen(grad, 11, Qt.SolidLine, Qt.RoundCap))
             p.drawArc(QRectF(c.x() - R, c.y() - R, 2 * R, 2 * R), 90 * 16, int(-frac * 360 * 16))
 

@@ -6,6 +6,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QConicalGradient, QFont, QFontMetricsF, QPainter, QPainterPath, QPen
 
 from core import DesktopWidget, config, grid
+from widgets import kit
 
 BLUE, CYAN = QColor("#2f8bff"), QColor("#36d1ff")
 GLASS_ML = 250
@@ -81,9 +82,7 @@ class WaterWidget(DesktopWidget):
         p.setBrush(Qt.NoBrush)
         p.drawEllipse(c, R, R)
         if frac > 0:
-            grad = QConicalGradient(c, 90)
-            grad.setColorAt(0, CYAN)
-            grad.setColorAt(1, BLUE)
+            grad = kit.ring_brush(c, CYAN, BLUE, frac)
             p.setPen(QPen(grad, 12, Qt.SolidLine, Qt.RoundCap))
             p.drawArc(QRectF(c.x() - R, c.y() - R, 2 * R, 2 * R), 90 * 16, int(-frac * 360 * 16))
         self._drop(p, QPointF(c.x(), c.y() - R * 0.64), R * 0.19)

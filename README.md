@@ -16,6 +16,8 @@
 
 Found a bug or have an idea — write in [Telegram](https://t.me/Liquid_Desktop) · Нашёл баг или есть идея — пиши в [Telegram](https://t.me/Liquid_Desktop)
 
+Like the project? [Support the author on Boosty](https://boosty.to/liquiddesktop) · Нравится проект? [Поддержать автора на Boosty](https://boosty.to/liquiddesktop)
+
 ⭐ If you like the project, star it — it really helps · Нравится проект — поставь звезду, это очень помогает
 
 <img src="screenshots/demo.gif" width="300" alt="Liquid Desktop: glass widgets scrolling, Dynamic Island with music">
@@ -43,8 +45,8 @@ Liquid Desktop is two small open-source apps written in Python + PySide6:
 - **Desktop Widgets** (`desktop-widgets`) — 34 widgets with live acrylic glass inspired by ColorOS 17:
   clock, weather clock, analog clock, weather, air quality, calendar, world clock, sun, moon, progress of the
   day/week/month, countdown, timer, stopwatch, pomodoro, breathing, water, habits, to-do, notes, clipboard,
-  calculator, dice, photo, player and lyrics (Spotify and YouTube Music), system, processes, network,
-  GPU (NVIDIA), ping, sound, currency, quick buttons, and **Claude** — a pixel pet that shows what
+  calculator, dice, photo, GIF, player and lyrics (Spotify, YouTube Music, Yandex Music), system, processes, network,
+  GPU (NVIDIA, AMD, Intel), ping, sound, currency, quick buttons, and **Claude** — a pixel pet that shows what
   Claude Code is doing right now (right click → **Connect to Claude Code** adds hooks to
   `~/.claude/settings.json`; a backup copy is saved next to it, and uninstalling removes the hooks).
 - **Dynamic Island** (`dynamic-island`) — a glass capsule at the top of the main screen. It appears only when
@@ -124,7 +126,8 @@ Your settings are saved to `config.json` inside each folder. They are personal a
 
 ### Known limitations (alpha)
 
-- Windows only. The GPU widget works with NVIDIA cards.
+- Windows only. The GPU widget reads NVIDIA cards from the driver, AMD Radeon and Intel through Windows itself
+  (temperature shows up when the driver reports it; integrated graphics often does not).
 - Live acrylic captures the screen under the glass, so it uses a little CPU while the mouse moves nearby.
   Turn **Acrylic** off for a cheaper frosted look.
 - "Under icons" mode doesn't work together with Wallpaper Engine.
@@ -152,7 +155,7 @@ Liquid Desktop — две небольшие программы с открыт�
 - **Виджеты** (`desktop-widgets`) — 34 виджета с живым акриловым стеклом в стиле ColorOS 17:
   часы, метеочасы, циферблат, погода, воздух, календарь, мировое время, солнце, луна, прогресс дня/недели/месяца,
   отсчёт, таймер, секундомер, помидор, дыхание, вода, привычки, дела, заметки, буфер, калькулятор, кубик, фото,
-  плеер и слова песни (Spotify и YouTube Music), система, процессы, сеть, видеокарта (NVIDIA), пинг, звук,
+  плеер и слова песни (Spotify, YouTube Music, Яндекс Музыка), система, процессы, сеть, видеокарта (NVIDIA, AMD, Intel), пинг, звук,
   курсы валют, быстрые кнопки и **Клод** — пиксельный зверёк, который показывает, чем сейчас занят
   Claude Code (правый клик → **Подключить к Claude Code** добавляет хуки в `~/.claude/settings.json`;
   прежний файл сохраняется копией рядом, при удалении программы хуки убираются).
@@ -233,7 +236,8 @@ Liquid Desktop — две небольшие программы с открыт�
 
 ### Ограничения (альфа)
 
-- Только Windows. Виджет «Видеокарта» — для карт NVIDIA.
+- Только Windows. Виджет «Видеокарта»: NVIDIA — напрямую из драйвера, AMD Radeon и Intel — средствами самой Windows
+  (температура есть, когда её отдаёт драйвер; у встроенной графики её часто нет).
 - Живой акрил снимает экран под стеклом, поэтому немного нагружает процессор, пока рядом двигается мышь.
   Выключи **Акрил** — будет более дешёвая изморозь.
 - Режим «Под ярлыками» не работает вместе с Wallpaper Engine.

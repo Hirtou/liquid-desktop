@@ -31,13 +31,16 @@ import screen
 from bridge import SERVER as WIDGETS_SERVER
 from bridge import (Audio, focus_cfg, focus_left, focus_length, focus_today, settings, timer_cfg, timer_left,
                     widgets)
-from media import Media, YT_MUSIC_URL, accent, glyph, toggle_glyph
+from media import Media, YT_MUSIC_URL, accent, glyph, player_uri, toggle_glyph
 
 POOL = ThreadPoolExecutor(max_workers=1)
 WIN_W, WIN_H = 520, 200  # окно с запасом под самую большую карточку и свечение; пустое место пропускает мышь
 TOP = 8                  # отступ капсулы от верха экрана
 H = 36                   # высота капсулы
 GAP = 8                  # между капсулой и каплей второго дела
+LINE_W, LINE_H = 132, 6  # остров «линией» (настройка "line"): свёрнутый — тонкая полоска
+LINE_PAD_X, LINE_PAD_Y = 6, 6  # куда можно нажать, чтобы раскрыть линию: сама линия, чуть шире и до верха экрана
+SWIPE = 18               # смах вверх на столько точек — остров сворачивается в линию
 SNAP_SECONDS = 3.0       # после клавиши скриншота остров виден снимкам
 FG = QColor("#f4f4f7")          # текст; светлая тема меняет палитру (set_palette)
 DIM = QColor(244, 244, 247, 135)
@@ -265,6 +268,8 @@ class Island(QWidget):
         self.anim.setInterval(self.frame)
         self.place()
         QApplication.primaryScreen().geometryChanged.connect(lambda _: self.place())
+        # главный экран сменили (подключили монитор, закрыли крышку ноутбука) — переехать на него
+        QApplication.instance().primaryScreenChanged.connect(self.on_primary)
         # горячая клавиша «спрятать / вернуть» (в config.json: "hotkey", например "ctrl+alt+i" или "win+shift+f9")
         self.hotkey = settings.get("hotkey", "ctrl+alt+i")
         self.hotkey_ok = screen.register_hotkey(int(self.winId()), HOTKEY_ID, self.hotkey)
@@ -304,6 +309,11 @@ class Island(QWidget):
         self.set_enabled(on)
         if on:
             self.show_toast("island", 1.4)
+
+    def on_primary(self, scr):
+        if scr is not None:
+            scr.geometryChanged.connect(lambda _: self.place())
+            self.place()
 
     def place(self):
         g = QApplication.primaryScreen().geometry()
@@ -388,6 +398,12 @@ class Island(QWidget):
         self.update_hooks()
         self.repaint_area()
 
+    def set_line(self, on):
+        settings.set("line", bool(on))
+        self.hover = False
+        self.peek_until = 0
+        self.retarget()
+
     def set_enabled(self, on):
         settings.set("enabled", bool(on))
         self.poll()
@@ -409,12 +425,22 @@ class Island(QWidget):
 
     def grab_bg(self):
         look = self.look
-        radius = round(max(0, min(10, look["blur"])) / 3)  # 6 (как у виджетов) — то же размытие, что было
-        vivid = 1.35 + 0.5 * self.juice()
+        # размытие — как у виджетов: у них копия экрана меньше в 4 раза, у нас в 6 — радиус в 1.5 раза меньше
+        radius = round(max(0, min(10, look["blur"])) * 2 / 3)
+        haze, theme, prev = look["haze"], look["theme"], self.auto_dark
         if self.bg_busy:  # прошлый снимок ещё считается — снять сразу после него
             self.bg_again = True
             return
         if not self.isVisible() or time.monotonic() < self.snap_until or not look.get("acrylic"):
+            return
+        # остров обязан быть невидим своему же снимку: иначе он снимает сам себя и с каждым кадром темнеет
+        # («то прозрачный, то нет»). Не вышло спрятаться — пробуем ещё раз; пока нет — ровная заливка без снимка
+        hwnd = int(self.winId())
+        if not screen.excluded(hwnd) and not screen.exclude_from_capture(hwnd):
+            if self.bg is not None:
+                self.bg = None
+                self.bg_gen += 1
+                self.repaint_area()
             return
         self.bg_busy = True
         k = self.devicePixelRatioF()
@@ -423,7 +449,7 @@ class Island(QWidget):
 
         def work():
             try:
-                img = screen.frosted(*rect, radius=radius, vivid=vivid)
+                img = screen.frosted(*rect, radius=radius, haze=haze, theme=theme, prev_dark=prev)
             except Exception:
                 img = None
             try:
@@ -454,6 +480,7 @@ class Island(QWidget):
 
     def on_bg(self, img):
         self.bg_busy = False
+        img, lum = img if img is not None else (None, 0.5)  # стекло и яркость того, что под островом
         if self.bg_again:  # пока считали, под островом ещё что-то поменялось
             self.bg_again = False
             QTimer.singleShot(0, self.grab_bg)
@@ -465,8 +492,6 @@ class Island(QWidget):
                 return
             self.bg = img
             # авто-тема: по яркости того, что под островом (между порогами — как была)
-            c = img.scaled(1, 1, Qt.IgnoreAspectRatio, Qt.SmoothTransformation).pixelColor(0, 0)
-            lum = (c.red() * 0.3 + c.green() * 0.59 + c.blue() * 0.11) / 255
             self.auto_dark = lum < (TO_LIGHT if self.auto_dark else TO_DARK)
             if self.look.get("theme") == "auto" and self.auto_dark != DARK:
                 self.refresh_look(force=True)
@@ -653,6 +678,13 @@ class Island(QWidget):
     def poll(self):
         now = time.time()
         settings.reload_if_changed()  # настройки меняют и в окне виджетов (раздел «Остров») — подхватить сразу
+        keys = settings.get("hotkey", "ctrl+alt+i")
+        if keys != self.hotkey:  # сочетание сменили в настройках — назначить сразу, без перезапуска
+            self.hotkey = keys
+            self.hotkey_ok = screen.register_hotkey(int(self.winId()), HOTKEY_ID, keys)
+        if now - getattr(self, "tz_checked", 0) > 30:  # пояс или время системы могли поменять
+            self.tz_checked = now
+            screen.refresh_timezone()
         if self.wanted_lang() != lang.LANG:  # язык виджетов поменяли, а остров «как у виджетов»
             self.restart()
             return
@@ -731,8 +763,19 @@ class Island(QWidget):
         return self.state_of("agent") == "ask" or self.state_of("timer") == "done" \
             or self.state_of("focus") == "ready"
 
+    def line_mode(self, first):
+        """Свёрнуть в линию сейчас? Включено в настройках, мышь не над островом, и нет ничего важного:
+        всплывашки, звонка, вопроса помощника, дозвеневшего таймера."""
+        return bool(settings.get("line", False)) and not self.expanded() and first != "toast" \
+            and first != "call" and not self.calling()
+
+    def draw_line(self, p, r, big):
+        """У линии содержимого нет — только сама полоска (её рисует paintEvent)."""
+
     def view_size(self, view):
         """Размер капсулы под вид; крупнее текст — шире капсула (высота свёрнутой та же)."""
+        if view[0] == "line":
+            return LINE_W, LINE_H
         if view[0] == "toast":
             w, h = TOASTS.get(self.toast["kind"] if self.toast else view[1], 240), H
         else:
@@ -758,7 +801,9 @@ class Island(QWidget):
                 self.h.jump(H * 0.6)
                 self.alpha.jump(0)
                 self.show()
-            if first == "toast":
+            if self.line_mode(first):
+                view = ("line", False)
+            elif first == "toast":
                 view = ("toast", self.toast["kind"])
             elif first == "music" and not self.expanded() and time.monotonic() < self.mini_until:
                 view = ("music", "mini")
@@ -766,14 +811,17 @@ class Island(QWidget):
                 view = (first, self.expanded())
             tw, th = self.view_size(view)
             # как жидкость: раскрываясь, сперва тянется вширь, потом вниз; сворачиваясь — наоборот
-            if th > self.h.target:
+            if view[0] == "line" or (self.view and self.view[0] == "line"):
+                # в линию и из линии — ширина и высота вместе: иначе по пути получалась широкая плоская плашка
+                self.w.k, self.h.k = 300, 300
+            elif th > self.h.target:
                 self.w.k, self.h.k = 340, 220
             elif th < self.h.target:
                 self.w.k, self.h.k = 230, 320
             self.w.set(tw)
             self.h.set(th)
             self.alpha.set(1)
-            self.want_bubble = bool(second) and th <= H
+            self.want_bubble = bool(second) and th <= H and view[0] != "line"
             self.place_bubble()
             self.glow.set(1 if (view[1] is True) or self.calling() else 0)
         if view != self.view:
@@ -885,6 +933,8 @@ class Island(QWidget):
     def shapes(self):
         """Капсула, капля второго дела и общий контур (с перемычкой, пока капля рядом)."""
         w, h, b = self.w.x, self.h.x, max(0.0, self.bubble.x)
+        if h < H * 0.95:  # капсула ещё (или уже) тоньше обычной — из линии / в линию: капля не торчит из полоски
+            b *= max(0.0, min(1.0, (h - H * 0.7) / (H * 0.25))) ** 2
         key = (round(w, 2), round(h, 2), round(b, 3))
         if getattr(self, "_shape_key", None) == key:  # стоит на месте — тот же контур, не пересчитываем
             return self._shape
@@ -930,7 +980,11 @@ class Island(QWidget):
 
     def hover_check(self, pos):
         """Раскрываться только над самой капсулой: над каплей второго дела — нет (клик по ней — поменять местами)."""
-        if self.shapes()[0].contains(pos) and not self.over_arrows(pos):
+        pill = self.shapes()[0]
+        if self.view and self.view[0] == "line":  # линия от наведения не раскрывается — только по клику
+            self.enter_timer.stop()
+            return
+        if pill.contains(pos) and not self.over_arrows(pos):
             if not self.hover and not self.enter_timer.isActive():
                 self.enter_timer.start()
         else:
@@ -971,6 +1025,7 @@ class Island(QWidget):
         self.repaint_area()
 
     def mouseReleaseEvent(self, event):
+        self.swipe_from = None
         if self.drag is None:
             return
         self.drag_to(event.position())
@@ -986,15 +1041,30 @@ class Island(QWidget):
         if self.drag is not None:
             self.drag_to(pos)
             return
+        start = getattr(self, "swipe_from", None)
+        if start is not None and event.buttons() & Qt.LeftButton:
+            dx, dy = pos.x() - start.x(), pos.y() - start.y()
+            if dy < -SWIPE and abs(dy) > abs(dx):  # смахнули вверх — свернуть в линию
+                self.swipe_from = None
+                self.set_line(True)
+                return
         self.hover_check(pos)
         hot = any(r.contains(pos) for r in self.buttons.values()) or self.bubble_rect.contains(pos)
         self.setCursor(Qt.PointingHandCursor if hot else Qt.ArrowCursor)
 
     def mousePressEvent(self, event):
         pos = event.position()
+        self.swipe_from = None
+        if event.button() == Qt.LeftButton and self.view and self.view[0] == "line":
+            self.set_line(False)  # клик по линии — остров снова целиком
+            return
+        if event.button() == Qt.LeftButton:
+            self.swipe_from = pos  # вдруг это смах вверх (см. mouseMoveEvent)
         if event.button() == Qt.RightButton:
             menu = QMenu()
             menu.addAction(tr("Настройки…"), self.open_settings)
+            line = bool(settings.get("line", False))
+            menu.addAction(tr("Развернуть из линии") if line else tr("Свернуть в линию"), lambda: self.set_line(not line))
             menu.addAction(tr("Выключить остров (включить — в трее)"), lambda: self.set_enabled(False))
             menu.exec(event.globalPosition().toPoint())
             return
@@ -1023,9 +1093,19 @@ class Island(QWidget):
         elif not self.expanded():
             self.hover = True
             self.retarget()
-        elif kind == "music":
+
+    def mouseDoubleClickEvent(self, event):
+        """Открыть приложение того, что на острове (плеер, помощник, погоду) — двойным кликом, чтобы случайный
+        клик по раскрытому острову не выбрасывал в другое окно."""
+        if event.button() != Qt.LeftButton or not self.view:
+            return
+        pos = event.position()
+        if any(r.contains(pos) for r in self.buttons.values()) or self.view[0] in ("toast", "line"):
+            return  # кнопки и сообщения — своими кликами
+        kind = self.view[0]
+        if kind == "music":
             import os
-            os.startfile(YT_MUSIC_URL if (self.music or {}).get("source") == "ytmusic" else "spotify:")
+            os.startfile(player_uri((self.music or {}).get("source"), (self.music or {}).get("app", "")))
         elif kind == "agent" and self.agent[0]:
             ag.open_app(self.agent[0])
 
@@ -1131,8 +1211,8 @@ class Island(QWidget):
         p.setClipPath(path)
         tint = self.tint()
         if self.bg is not None and self.look["acrylic"]:
+            # дымка, насыщенность и притемнение уже в самом снимке (screen.frosted) — ровно как у виджетов
             p.drawImage(QRectF(0, 0, WIN_W, WIN_H), self.bg)
-            p.fillPath(path, tint)
         else:  # без акрила (или снимка ещё нет) — плотнее, чтобы текст читался
             if self.look["acrylic"]:
                 tint.setAlpha(max(tint.alpha(), 236))
@@ -1140,17 +1220,23 @@ class Island(QWidget):
         # лёгкий блик сверху и цветной отсвет дела снизу — свет «копится» в толще стекла
         box = path.boundingRect()
         sheen = QLinearGradient(box.topLeft(), box.bottomLeft())
-        sheen.setColorAt(0, QColor(255, 255, 255, 20))
-        sheen.setColorAt(0.45, QColor(255, 255, 255, 0))
-        sheen.setColorAt(1, QColor(255, 255, 255, 8))
+        if DARK:  # как у виджетов: тёмное стекло — блик в верхней трети
+            sheen.setColorAt(0, QColor(255, 255, 255, 14))
+            sheen.setColorAt(0.35, QColor(255, 255, 255, 0))
+            sheen.setColorAt(1, QColor(255, 255, 255, 0))
+        else:     # светлое — светлеет книзу
+            sheen.setColorAt(0, QColor(255, 255, 255, 0))
+            sheen.setColorAt(0.45, QColor(255, 255, 255, 0))
+            sheen.setColorAt(1, QColor(255, 255, 255, 24))
         p.fillPath(path, sheen)
         p.restore()
         # кромка: тонкий свет, ярче снизу, с оттенком дела
         rim = QLinearGradient(box.topLeft(), box.bottomLeft())
-        rim.setColorAt(0, QColor(255, 255, 255, 70))
-        rim.setColorAt(0.5, QColor(255, 255, 255, 18))
-        rim.setColorAt(1, QColor(255, 255, 255, 46))
-        p.setPen(QPen(rim, 1.1))
+        ra = 0.55 if DARK else 1.0  # кромка — те же числа, что у карточки виджета
+        rim.setColorAt(0, QColor(255, 255, 255, int(150 * ra)))
+        rim.setColorAt(0.5, QColor(255, 255, 255, int(45 * ra)))
+        rim.setColorAt(1, QColor(255, 255, 255, int(130 * ra)))
+        p.setPen(QPen(rim, 1.0))
         p.setBrush(Qt.NoBrush)
         p.drawPath(path)
         p.end()
@@ -1174,6 +1260,15 @@ class Island(QWidget):
         # стекло, блик и кромка меняются только с формой и снимком под островом — готовая картинка;
         # каждый кадр это одно копирование, а не размытое стекло, градиенты и обводка заново
         p.drawPixmap(0, 0, self.chrome(path))
+        if self.view and self.view[0] == "line" and pill.height() < H * 0.6:
+            # линия: светлая полоска поверх стекла, чтобы её было видно на любом фоне; вокруг — почти
+            # невидимое поле (иначе Windows пропускает мышь сквозь прозрачное и навести на линию нельзя)
+            catch = pill.adjusted(-LINE_PAD_X, -TOP, LINE_PAD_X, LINE_PAD_Y)
+            p.fillRect(catch, QColor(0, 0, 0, 2))
+            k = 1 - max(0.0, min(1.0, (pill.height() - LINE_H) / (H * 0.6 - LINE_H)))
+            p.setPen(Qt.NoPen)
+            p.setBrush(with_alpha(FG, 0.55 * k))
+            p.drawRoundedRect(pill, pill.height() / 2, pill.height() / 2)
         if self.ripples:  # волны от касаний
             p.save()
             p.setClipPath(path)

@@ -6,9 +6,10 @@ import time
 from datetime import date
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
-from PySide6.QtGui import QColor, QConicalGradient, QFont, QPainter, QPen
+from PySide6.QtGui import QColor, QFont, QPainter, QPen
 
 from core import DesktopWidget, config, grid
+from widgets import kit
 
 TOMATO, TOMATO2, GREEN, GREEN2 = QColor("#ff6b5a"), QColor("#e5486b"), QColor("#4ade80"), QColor("#22a06b")
 PRESETS = {"25/5": (25, 5), "50/10": (50, 10)}
@@ -112,19 +113,17 @@ class FocusWidget(DesktopWidget):
         p.setBrush(Qt.NoBrush)
         p.drawEllipse(c, R, R)
         if frac > 0:
-            grad = QConicalGradient(c, 90)
-            grad.setColorAt(0, c1)
-            grad.setColorAt(1, c2)
+            grad = kit.ring_brush(c, c1, c2, frac)
             p.setPen(QPen(grad, 11, Qt.SolidLine, Qt.RoundCap))
             p.drawArc(QRectF(c.x() - R, c.y() - R, 2 * R, 2 * R), 90 * 16, int(-frac * 360 * 16))
         # листик помидора над кольцом (в работе) — свой рисунок
         if work:
             p.setPen(Qt.NoPen)
-            p.setBrush(GREEN2)
-            for a in (-35, 0, 35):
+            p.setBrush(GREEN)  # ярко-зелёный и покрупнее: мелкий тёмный листик читался как грязь на кольце
+            for a in (-48, 0, 48):
                 rad = math.radians(a - 90)
-                tip = QPointF(c.x() + math.cos(rad) * 9, c.y() - R + math.sin(rad) * 9 + 1)
-                p.drawPolygon([QPointF(c.x() - 3, c.y() - R), QPointF(c.x() + 3, c.y() - R), tip])
+                tip = QPointF(c.x() + math.cos(rad) * 14, c.y() - R + math.sin(rad) * 14 + 2)
+                p.drawPolygon([QPointF(c.x() - 4.5, c.y() - R + 2), QPointF(c.x() + 4.5, c.y() - R + 2), tip])
 
         big = QFont("Bahnschrift SemiBold")
         big.setPixelSize(int(R * 0.5))

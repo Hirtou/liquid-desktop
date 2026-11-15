@@ -7,6 +7,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPixmap
 
 from core import DesktopWidget, activity, grid, open_uri
+from widgets import tz
 
 BLUE = QColor("#2f6bff")
 
@@ -26,6 +27,9 @@ class AnalogClockWidget(DesktopWidget):
 
     def double_click(self):
         open_uri("ms-clock:")
+
+    def add_actions(self, menu):
+        tz.add_menu(menu, self)
 
     def push_interval(self):
         return 33 if activity.mode == "desktop" else 1000
@@ -59,7 +63,7 @@ class AnalogClockWidget(DesktopWidget):
             self._face(fp, QPointF(r.width() / 2, r.height() / 2), R, fg, self.shape())
             fp.end()
         p.drawPixmap(r.topLeft(), self.face)
-        self._hands(p, c, R, dark, fg)
+        self._hands(p, c, R, dark, fg, tz.now(self.cfg))
 
     @staticmethod
     def _face(p, c, R, fg, shape):
@@ -95,8 +99,7 @@ class AnalogClockWidget(DesktopWidget):
             p.drawText(QRectF(pos.x() - 20, pos.y() - 14, 40, 28), Qt.AlignCenter, str(n))
 
     @staticmethod
-    def _hands(p, c, R, dark, fg):
-        now = datetime.now()
+    def _hands(p, c, R, dark, fg, now):
         s = now.second + now.microsecond / 1e6
         m = now.minute + s / 60
         h = now.hour % 12 + m / 60

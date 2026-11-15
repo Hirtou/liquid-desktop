@@ -182,6 +182,7 @@ TILES = {
     "meteoclock": ("#3B4152", "#1E2230"), "clock": ("#5B8CFF", "#2F5BEA"), "analog": ("#F2F4F8", "#C9D0DC"),
     "system": ("#36C08E", "#159A6B"), "notes": ("#FFD25E", "#F5A623"), "weather": ("#5AB8FF", "#2C7BEA"),
     "calendar": ("#FFFFFF", "#E7EAF0"), "network": ("#8A6CFF", "#5B3FE0"), "photo": ("#FF8A7A", "#E5486B"),
+    "gif": ("#B58CFF", "#6D3FE0"),
     "timer": ("#FF8F5A", "#F2542D"), "todo": ("#4CD3A5", "#1FA37A"), "worldclock": ("#3EC7E0", "#1F86C9"),
     "sun": ("#FFB547", "#FF7A2F"), "currency": ("#5ED39B", "#22A06B"), "player": ("#2A2D36", "#121318"),
     "claude": ("#F4EEE6", "#E6DCCF"), "countdown": ("#FF8A5C", "#E5486B"), "water": ("#36D1FF", "#2F6BFF"),
@@ -378,6 +379,16 @@ def _tile_glyph(p, name):
         f.setBold(True)
         p.setFont(f)
         p.drawText(QRectF(0, 0, 100, 100), Qt.AlignCenter, "$")
+    elif name == "gif":  # кадр плёнки с надписью GIF
+        p.setPen(Qt.NoPen)
+        p.setBrush(white)
+        p.drawRoundedRect(QRectF(16, 28, 68, 44), 10, 10)
+        p.setPen(QColor("#6D3FE0"))
+        f = p.font()
+        f.setPixelSize(27)
+        f.setBold(True)
+        p.setFont(f)
+        p.drawText(QRectF(16, 28, 68, 44), Qt.AlignCenter, "GIF")
     elif name == "photo":
         p.setPen(Qt.NoPen)
         p.setBrush(white)

@@ -8,14 +8,9 @@ from PySide6.QtGui import QColor, QFont, QPainter
 
 import icons
 from core import SHADOW, DesktopWidget, config, grid, grid_rows, open_uri
+from widgets.tz import ZONES
 
-CITIES = {
-    "Алматы": "Asia/Almaty", "Астана": "Asia/Almaty", "Ташкент": "Asia/Tashkent", "Бишкек": "Asia/Bishkek",
-    "Москва": "Europe/Moscow", "Киев": "Europe/Kyiv", "Стамбул": "Europe/Istanbul", "Берлин": "Europe/Berlin",
-    "Париж": "Europe/Paris", "Лондон": "Europe/London", "Дубай": "Asia/Dubai", "Пекин": "Asia/Shanghai",
-    "Сеул": "Asia/Seoul", "Токио": "Asia/Tokyo", "Бангкок": "Asia/Bangkok", "Сидней": "Australia/Sydney",
-    "Нью-Йорк": "America/New_York", "Лос-Анджелес": "America/Los_Angeles",
-}
+CITIES = ZONES  # тот же список, что у часов (widgets/tz.py)
 DEFAULT = ["Москва", "Лондон", "Нью-Йорк", "Токио"]  # в настройках города хранятся по-русски, на экране — tr()
 MAX = 5
 ROW = 44
