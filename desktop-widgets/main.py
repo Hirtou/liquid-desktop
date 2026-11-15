@@ -924,6 +924,7 @@ class Catalog(DesktopWidget):
         """Окно убрали с глаз: отпустить превью и своё стекло (окно большое — снимок под ним,
         стекло и картинка рамки вместе с чёткостью экрана — это десятки МБ). При показе всё соберётся заново."""
         self.preview_timer.stop()
+        self.build_timer.stop()
         for card in self.cards.values():
             card.preview.release()
         self.glass_img = self.last_src = self._chrome_pix = None

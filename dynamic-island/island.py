@@ -151,6 +151,7 @@ class Spring:
             self.x += self.v * dt / n
         if abs(self.target - self.x) < 0.02 and abs(self.v) < 0.3:
             self.x, self.v = self.target, 0.0
+            return False  # пружина остановилась — движение закончено
         return True
 
 
@@ -201,7 +202,7 @@ class Island(QWidget):
         self.setMouseTracking(True)
         self.setWindowTitle(tr("Динамический остров"))
         hz = QApplication.primaryScreen().refreshRate() or 60
-        self.frame = max(5, round(1000 / hz))  # мс на кадр движения: 180 Гц — 6 мс, каждый кадр монитора свой
+        self.frame = max(16, round(1000 / hz))  # мс на кадр движения: потолок 60 fps, даже на 180 Гц мониторе
         self.w, self.h = Spring(H, 300, 0.84), Spring(H, 240, 0.86)
         self.bubble = Spring(0, 220, 0.72)    # 0..1 — капля второго дела (чуть перелетает — «отрывается»)
         self.want_bubble = False              # второе дело есть — капля выйдет, когда капсула свёрнута
