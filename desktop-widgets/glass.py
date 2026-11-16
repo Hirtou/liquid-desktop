@@ -361,13 +361,15 @@ def _grab(x, y, w, h):
 
 
 def _shrink(bgra, w, h):
-    """BGRA-кусок снимка -> RGB (h, w, 3) уменьшенный силами Qt (сглаженно), без перевода в RGB целиком:
-    в памяти Windows BGRA — это QImage.Format_RGB32 как есть."""
+    """BGRA-кусок снимка -> RGB (h, w, 3) уменьшенный box-фильтром без Qt
+    (Qt в фоновом потоке — небезопасно: ошибки Painter not active, вылеты)."""
     a = np.ascontiguousarray(bgra)
-    img = QImage(a.data, a.shape[1], a.shape[0], a.shape[1] * 4, QImage.Format_RGB32)
-    img = img.scaled(w, h, Qt.IgnoreAspectRatio, Qt.SmoothTransformation).convertToFormat(QImage.Format_RGB888)
-    out = np.frombuffer(img.constBits(), np.uint8, img.sizeInBytes())
-    return out.reshape(h, img.bytesPerLine())[:, :w * 3].reshape(h, w, 3).copy()
+    # только RGB, обрезаем до кратного целевому размеру
+    bh = max(1, a.shape[0] // h)
+    bw = max(1, a.shape[1] // w)
+    ch, cw = h * bh, w * bw
+    small = a[:ch, :cw, :3].reshape(h, bh, w, bw, 3).mean(axis=(1, 3))
+    return small.astype(np.uint8)
 
 
 def small_size(W, H):
@@ -606,12 +608,14 @@ def _lighting(sdf, nx, ny, h, dark):
 
 
 def _resize(arr, w, h):
-    """RGB-массив -> другой размер силами Qt (сглаженно). arr жив, пока Qt читает его память."""
+    """RGB-массив -> другой размер nearest-neighbor без Qt (в фоновом потоке Qt не трогаем)."""
     arr = np.ascontiguousarray(arr)
-    img = QImage(arr.data, arr.shape[1], arr.shape[0], arr.shape[1] * 3, QImage.Format_RGB888)
-    img = img.scaled(w, h, Qt.IgnoreAspectRatio, Qt.SmoothTransformation).convertToFormat(QImage.Format_RGB888)
-    out = np.frombuffer(img.constBits(), np.uint8, img.sizeInBytes())
-    return out.reshape(h, img.bytesPerLine())[:, :w * 3].reshape(h, w, 3).copy()
+    ih, iw = arr.shape[:2]
+    if (iw, ih) == (w, h):
+        return arr.copy()
+    ys = np.clip((np.arange(h) * ih / h).astype(np.int32), 0, ih - 1)
+    xs = np.clip((np.arange(w) * iw / w).astype(np.int32), 0, iw - 1)
+    return arr[np.ix_(ys, xs)]
 
 
 # ---------- стекло ----------

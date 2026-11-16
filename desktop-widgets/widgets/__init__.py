@@ -6,6 +6,7 @@ from widgets.claude import ClaudeWidget
 from widgets.clipboard import ClipboardWidget
 from widgets.dice import DiceWidget
 from widgets.habits import HabitsWidget
+from widgets.opencode import OpenCodeWidget
 from widgets.processes import ProcessesWidget
 from widgets.progress import ProgressWidget
 from widgets.stopwatch import StopwatchWidget
@@ -37,5 +38,5 @@ from widgets.worldclock import WorldClockWidget
 # каталог: новый виджет — добавить сюда (и значок в icons.TILES)
 ALL = [PlayerWidget, LyricsWidget, MeteoClockWidget, AnalogClockWidget, ClockWidget, WorldClockWidget,
        WeatherWidget, AirWidget, SunWidget, CalendarWidget, ProgressWidget, CountdownWidget, TimerWidget, StopwatchWidget, WaterWidget, HabitsWidget,
-       TodoWidget, NotesWidget, ClipboardWidget, CalcWidget, ClaudeWidget, SystemWidget, ProcessesWidget, NetworkWidget, GpuWidget, PingWidget, VolumeWidget,
+       TodoWidget, NotesWidget, ClipboardWidget, CalcWidget, ClaudeWidget, OpenCodeWidget, SystemWidget, ProcessesWidget, NetworkWidget, GpuWidget, PingWidget, VolumeWidget,
        CurrencyWidget, PhotoWidget, GifWidget, FocusWidget, BreatheWidget, DiceWidget, MoonWidget, QuickWidget]

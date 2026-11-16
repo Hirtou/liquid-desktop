@@ -1,12 +1,14 @@
-"""AI-помощники на острове: Claude Code, Codex, Antigravity — что делает тот, кто сейчас работает.
+"""AI-помощники на острове: Claude Code, OpenCode, Codex, Antigravity — что делает тот, кто сейчас работает.
 
-Состояние каждого пишет его хук в папку виджетов: claude_status.json (claude_hook.py), codex_status.json и
+Состояние каждого пишет его хук или плагин в папку виджетов: claude_status.json (claude_hook.py),
+opencode_status.json (плагин-мост liquid-desktop в ~/.config/opencode/plugins), codex_status.json и
 antigravity_status.json (agent_hook.py). Подключают хуки в окне настроек: раздел «Остров» -> «AI-помощники».
 Остров показывает одного — самого важного: спрашивает > только что закончил (8 с) > ошибка > работает;
 при равенстве — тот, кто менялся последним.
 
-Персонажи пиксельные, в одном стиле (claude_sprite.py): Claude — как в виджете «Клод», Codex — терминальчик
-с курсором-ртом «_», Antigravity — парящая планетка с кольцом. Анимации и реквизит по состояниям у всех общие.
+Персонажи пиксельные, в одном стиле (claude_sprite.py): Claude — как в виджете «Клод», OpenCode — тот же
+зверёк, но синий, с антенной, Codex — терминальчик с курсором-ртом «_», Antigravity — парящая планетка
+с кольцом. Анимации и реквизит по состояниям у всех общие.
 
 AI coding agents on the island: reads <agent>_status.json written by the hooks and picks the one to show."""
 import json
@@ -19,11 +21,12 @@ from PySide6.QtGui import QColor
 import claude_sprite as cl
 from lang import tr
 
-AGENTS = (("claude", "Claude"), ("codex", "Codex"), ("antigravity", "Antigravity"))
+AGENTS = (("claude", "Claude"), ("opencode", "OpenCode"), ("codex", "Codex"), ("antigravity", "Antigravity"))
 NAMES = dict(AGENTS)
 WORK = ("think", "read", "edit", "run", "web", "greet")
 # свой цвет у каждого (кромка значка, подпись «работает»); Codex — нейтральный: берётся цвет текста острова
-COLOR = {"claude": QColor(cl.BODY), "codex": QColor(cl.CODEX), "antigravity": QColor(cl.AGY_TOP)}
+COLOR = {"claude": QColor(cl.BODY), "opencode": QColor(cl.OC_BODY), "codex": QColor(cl.CODEX),
+         "antigravity": QColor(cl.AGY_TOP)}
 YELLOW, GREEN, RED = QColor("#ffd60a"), QColor("#30d158"), QColor("#ff453a")
 RANK = {"ask": 0, "done": 1, "oops": 2, "greet": 3, "think": 3, "read": 3, "edit": 3, "run": 3, "web": 3}
 

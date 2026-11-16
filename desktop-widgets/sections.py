@@ -307,6 +307,8 @@ class IslandPage(QWidget):
                 text = ""
             elif agent == "codex":
                 text = tr("подключён — в Codex один раз подтверди хук командой /hooks")
+            elif agent == "opencode":
+                text = tr("подключён — с новой задачи (не видно — перезапусти OpenCode)")
             elif agent == "antigravity":
                 text = tr("подключён — с новой задачи (не видно — перезапусти Antigravity)")
             else:

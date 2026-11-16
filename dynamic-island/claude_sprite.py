@@ -1,5 +1,6 @@
 """Пиксельные помощники для острова: Claude — тот же персонаж, что в виджете «Клод» (копия из виджетов, чтобы остров
-жил сам по себе), и в том же стиле — Codex (терминальчик с курсором-ртом «_») и Antigravity (планетка с кольцом, парит).
+жил сам по себе), и в том же стиле — OpenCode (синий зверёк с антенной), Codex (терминальчик с курсором-ртом «_»)
+и Antigravity (планетка с кольцом, парит).
 sprite(state, f, who=...) -> [(колонка, строка, цвет)]; TEXT — подписи состояний; SPEED — мс на кадр.
 Реквизит (лупа, листок, терминал, антенна, «!», искры, «Z», сердечки, пот) у всех общий."""
 from lang import tr
@@ -10,6 +11,8 @@ GRAY, GREEN, YELLOW, TERM = QColor("#9aa0aa"), QColor("#4ade80"), QColor("#ffd23
 PAPER, PAPER_EDGE = QColor("#f4f5f8"), QColor("#c3c8d2")
 PX = 7  # размер «пикселя» персонажа
 HEART, SWEAT = QColor("#ff5a7a"), QColor("#5ab8ff")
+# OpenCode: синий зверёк (как Клод, но синий) с антенной-огоньком
+OC_BODY = QColor("#4f8ef7")
 # Codex: светлый корпус-терминальчик, рот — зелёный курсор «_»
 CODEX = QColor("#d5dbe5")
 # Antigravity: планетка (сверху светлее), золотое кольцо, огонёк снизу — парит
@@ -27,7 +30,7 @@ EMOTIONS = ["greet", "love", "party", "oops", "bored", "sleep"]  # для мен
 
 def sprite(state, f, sweat=False, who="claude"):
     """Кадр f персонажа -> список (колонка, строка, цвет). Тело — колонки 2..9, строки 0..4.
-    sweat — капля пота у головы (долго работает). who — claude / codex / antigravity."""
+    sweat — капля пота у головы (долго работает). who — claude / opencode / codex / antigravity."""
     cells = []
     dy = dx = 0
     if state in ("done", "party"):  # прыжок
@@ -46,6 +49,8 @@ def sprite(state, f, sweat=False, who="claude"):
         _codex(put, state, f)
     elif who == "antigravity":
         _antigravity(put, state, f)
+    elif who == "opencode":
+        _opencode(put, state, f)
     else:
         _claude(put, state, f)
     _props(put, state, f, dy, sweat)
@@ -64,6 +69,24 @@ def _claude(put, state, f):
         if not lift:
             put(c, 6)
     _eyes(put, state, f, (3, 8))
+
+
+def _opencode(put, state, f):
+    """Опен-код: синий зверёк (как Клод) с антенной-огоньком на макушке; ножки — четыре, как у Клода."""
+    for c in range(2, 10):
+        for r in range(0, 5):
+            put(c, r, OC_BODY)
+    _arms(put, state, f, OC_BODY)
+    for i, c in enumerate((2, 4, 7, 9)):
+        lift = state in ("run", "edit", "idle") and (i + f) % 2 == 0 and (state != "idle" or f % 12 in (5, 6))
+        put(c, 5, OC_BODY)
+        if not lift:
+            put(c, 6, OC_BODY)
+    _eyes(put, state, f, (3, 8))
+    if state != "sleep":  # антенна с мигающим огоньком
+        put(5, -1, GRAY)
+        put(5, -2, GRAY)
+        put(5, -3, YELLOW if f % 4 < 2 else GRAY)
 
 
 def _codex(put, state, f):

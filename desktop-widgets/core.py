@@ -76,6 +76,10 @@ QLabel#bubble {{ background: {bubble}; border: 1px solid {cardline}; border-radi
 
 class Config:
     def __init__(self):
+        self._save_pending = False
+        self._save_timer = QTimer()
+        self._save_timer.setSingleShot(True)
+        self._save_timer.timeout.connect(self._save_now)
         try:
             with open(CONFIG_PATH, encoding="utf-8-sig") as f:  # -sig: Блокнот мог дописать BOM
                 self.data = json.load(f)
@@ -95,11 +99,25 @@ class Config:
         return self.data.setdefault(name, {})
 
     def save(self):
+        """Отложенное сохранение (debounce 0.5 с): много последовательных изменений — одна запись на диск."""
+        if self._save_pending:
+            return
+        self._save_pending = True
+        self._save_timer.start(500)
+
+    def _save_now(self):
+        self._save_pending = False
         # сначала во временный файл, потом подмена целиком: выключат свет посреди записи — старый файл цел
         tmp = CONFIG_PATH + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(self.data, f, ensure_ascii=False, indent=2)
         os.replace(tmp, CONFIG_PATH)
+
+    def flush(self):
+        """Сохранить прямо сейчас (при выходе из программы)."""
+        if self._save_pending:
+            self._save_timer.stop()
+            self._save_now()
 
 
 config = Config()
@@ -209,10 +227,20 @@ class Activity:
                     w.due, w.same = 0.0, 0
             self.cursor, self.moved = pos, now
         idle = now - self.moved > 1.0
-        # сам такт: 20 раз в секунду, пока двигается мышь (30 — разницы на размытом стекле не видно, а процессор
-        # заметно занят); в покое хватает 5; в игре на весь экран — 4
-        moving = idle and any(getattr(w, "streak", 0) >= 2 for w in self.widgets())  # живые обои в движении
+        # сам такт: пока двигается мышь — чаще, в покое — реже, в игре — по минимуму.
+        # Если нет ни одного видимого виджета — полностью засыпаем, будим при showEvent.
+        visible = [w for w in self.widgets() if w.isVisible() and not w.isMinimized()]
+        if not visible:
+            if self.timer.isActive():
+                self.timer.stop()
+            return
+        if not self.timer.isActive():
+            self.timer.start()
+        moving = idle and any(getattr(w, "streak", 0) >= 2 for w in visible)  # живые обои в движении
         rate = 250 if self.mode == "fullscreen" else 100 if moving else 200 if idle else 50
+        # в полном покое (мышь стоит, нет 움직이는 окон) — не чаще 2 раз в секунду
+        if idle and not moving:
+            rate = max(rate, 500)
         if self.timer.interval() != rate:
             self.timer.setInterval(rate)
         groups = {}
@@ -471,8 +499,8 @@ class DesktopWidget(QWidget):
             self.new_spot = True
         self.move(self.cfg.get("x", 0), self.cfg.get("y", 0))
 
-        # свет под курсором
-        self.hover = QTimer(self, interval=33, timeout=self.update)
+        # свет под курсором — 50 мс достаточно, глаз разницы не увидит, а перерисовок меньше
+        self.hover = QTimer(self, interval=50, timeout=self.update)
         # обои сменились — перерисовать стекло
         self.wall_timer = QTimer(self, interval=5000, timeout=self.check_wallpaper)
         self.wall_timer.start()
@@ -798,6 +826,7 @@ class DesktopWidget(QWidget):
     def showEvent(self, event):
         super().showEvent(event)
         activity._widgets = None  # список виджетов — собрать заново
+        activity.timer and activity.timer.start()  # виджет показался — возобновить такт стекла
         QTimer.singleShot(0, self.center_new)
         QTimer.singleShot(0, self.keep_on_screen)
         self.setup_capture()

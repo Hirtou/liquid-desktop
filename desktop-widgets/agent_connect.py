@@ -3,12 +3,14 @@
     Claude Code  — ~/.claude/settings.json      -> claude_hook.py  (пишет claude_status.json)
     Codex        — ~/.codex/hooks.json           -> agent_hook.py codex …
     Antigravity  — ~/.gemini/config/hooks.json   -> agent_hook.py antigravity …
+    OpenCode     — плагин в ~/.config/opencode/plugins/liquid-desktop -> opencode-plugin/index.ts
+                   (пишет opencode_status.json сам, без питоновского хука)
 
 Хук пишет только состояние («правит файл X», «ждёт ответа»), без текста разговора. Чужие хуки не трогаем,
 прежний файл настроек сохраняем копией рядом. disconnect() убирает только наши записи.
 Удаление программы зовёт `claude_connect.py --disconnect` — он отключает всех помощников.
 
-Connects AI coding agents (Claude Code, Codex, Antigravity) to the Dynamic Island via their hook settings."""
+Connects AI coding agents (Claude Code, OpenCode, Codex, Antigravity) to the Dynamic Island via their hook settings."""
 import ctypes
 import json
 import os
@@ -21,6 +23,8 @@ HOME = os.path.expanduser("~")
 CLAUDE_HOOK = os.path.join(HERE, "claude_hook.py")
 AGENT_HOOK = os.path.join(HERE, "agent_hook.py")
 NAME = "liquid-desktop"  # имя нашего набора хуков у Antigravity
+OC_PLUGIN = os.path.join(HOME, ".config", "opencode", "plugins", "liquid-desktop")  # мост для OpenCode
+OC_TEMPLATE = os.path.join(HERE, "opencode-plugin", "index.ts")
 
 AGENTS = {
     "claude": {"title": "Claude Code", "home": os.path.join(HOME, ".claude"),
@@ -39,8 +43,11 @@ AGENTS = {
                     "events": {"PreInvocation": "invoke", "PreToolUse": "pre", "PostToolUse": "post",
                                "Stop": "stop"},
                     "matcher": ("PreToolUse", "PostToolUse")},
+    "opencode": {"title": "OpenCode", "home": os.path.join(HOME, ".config", "opencode"),
+                 "settings": os.path.join(HOME, ".config", "opencode", "opencode.json"),
+                 "events": {}, "matcher": ()},  # подключается не хуками, а плагином (см. connect/disconnect)
 }
-ORDER = ("claude", "codex", "antigravity")
+ORDER = ("claude", "opencode", "codex", "antigravity")
 
 
 def _python():
@@ -98,6 +105,30 @@ def installed(agent):
     return os.path.isdir(AGENTS[agent]["home"])
 
 
+def _opencode_connected():
+    """Плагин-мост стоит и пишет именно в эту папку виджетов (путь вписан при подключении)."""
+    try:
+        with open(os.path.join(OC_PLUGIN, "index.ts"), encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        return False
+    return "liquid-desktop" in text and _norm(HERE) in _norm(text)
+
+
+def _opencode_connect():
+    """Поставить плагин-мост OpenCode: папка plugins/liquid-desktop, путь к статусу вписываем в шаблон."""
+    with open(OC_TEMPLATE, encoding="utf-8") as f:
+        code = f.read()
+    if "@STATUS_PATH@" not in code:
+        raise ValueError("opencode-plugin/index.ts is missing @STATUS_PATH@")
+    status = os.path.join(HERE, "opencode_status.json").replace("\\", "/")
+    os.makedirs(OC_PLUGIN, exist_ok=True)
+    tmp = os.path.join(OC_PLUGIN, "index.ts.liquid.tmp")
+    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+        f.write(code.replace("@STATUS_PATH@", status))
+    os.replace(tmp, os.path.join(OC_PLUGIN, "index.ts"))
+
+
 def _read(path):
     if not os.path.isfile(path):
         return {}
@@ -128,6 +159,8 @@ def _events(agent, data):
 
 
 def connected(agent):
+    if agent == "opencode":
+        return _opencode_connected()
     a = AGENTS[agent]
     try:
         data = _read(a["settings"])
@@ -141,6 +174,9 @@ def connected(agent):
 
 def connect(agent):
     """Добавить наши хуки. -> путь к копии прежнего файла настроек (или None, если его не было)."""
+    if agent == "opencode":  # не хуками, а плагином-мостом: файл настроек OpenCode не трогаем
+        _opencode_connect()
+        return None
     a = AGENTS[agent]
     path = a["settings"]
     data = _read(path)
@@ -168,6 +204,9 @@ def connect(agent):
 
 def disconnect(agent):
     """Убрать только наши хуки; опустевшие события и блоки — тоже."""
+    if agent == "opencode":  # снять плагин-мост целиком
+        shutil.rmtree(OC_PLUGIN, ignore_errors=True)
+        return
     a = AGENTS[agent]
     path = a["settings"]
     if not os.path.isfile(path):
