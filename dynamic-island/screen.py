@@ -322,6 +322,9 @@ def watch_windows(callback):
         places[hwnd] = rect
         try:
             callback(hwnd, rect, event == EVENT_SYSTEM_FOREGROUND)
+        except RuntimeError as _err:  # остров уже закрывается, а Windows ещё шлёт события окон — молча
+            if "already deleted" not in str(_err):
+                applog.error("screen.watch_windows.proc", _err)
         except Exception as _err:
             applog.error("screen.watch_windows.proc", _err)
 

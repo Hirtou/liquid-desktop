@@ -38,17 +38,17 @@ def valid_key(key):
     return bool(key) and len(key) < 100 and not any(c.isspace() for c in key)
 
 
-def get_json(url, **params):
+def get_json(url, timeout=10, **params):
     url += "?" + urllib.parse.urlencode(params)
     try:
-        with urllib.request.urlopen(url, timeout=10) as r:
+        with urllib.request.urlopen(url, timeout=timeout) as r:
             return json.load(r)
     except urllib.error.URLError as ex:
         if not isinstance(ex.reason, ssl.SSLError):
             raise
         applog.warn(f"погода: https не прошёл ({ex.reason}) — пробую http: {url.split('?')[0]}")
     # у сервера бывает просроченный сертификат — тогда по http
-    with urllib.request.urlopen(url.replace("https://", "http://", 1), timeout=10) as r:
+    with urllib.request.urlopen(url.replace("https://", "http://", 1), timeout=timeout) as r:
         return json.load(r)
 
 
@@ -73,14 +73,23 @@ def _metar_now(m):
     return 0, tr("ясно")
 
 
+_station_off = 0.0  # до какого времени не спрашивать станции (сервер не отвечал)
+
+
 def fetch_station(lat, lon):
     """Реальные измерения ближайшей метеостанции — сводки METAR аэропортов (NOAA, без ключа).
     Модель (Open-Meteo) в горах ошибается на градусы; станция — то, что на самом деле. None — рядом нет или старая."""
+    global _station_off
+    # Сервер станций (NOAA) из части стран отвечает долго или не отвечает вовсе: погода ждала его по 10 с
+    # при каждом обновлении, а журнал копил одинаковые ошибки. Не ответил — 30 минут без станции (только модель).
+    if time.time() < _station_off:
+        return None
     try:
-        reports = get_json("https://aviationweather.gov/api/data/metar", format="json", hours=3,
+        reports = get_json("https://aviationweather.gov/api/data/metar", timeout=5, format="json", hours=3,
                            bbox=f"{lat - 0.8:.2f},{lon - 1.1:.2f},{lat + 0.8:.2f},{lon + 1.1:.2f}")
     except Exception as _err:
-        applog.error("weather.fetch_station", _err)
+        _station_off = time.time() + 30 * 60
+        applog.warn(f"погода: метеостанции (NOAA) не ответили ({type(_err).__name__}) — 30 мин только модель")
         return None
     now = time.time()
     best = None
@@ -656,9 +665,9 @@ class WeatherWidget(DesktopWidget):
         self.refresh_all()
 
     def refresh_all(self):
-        for w in activity.widgets():  # Погода, Метеочасы, Солнце — сразу по-новому
+        for w in activity.widgets():  # Погода, Метеочасы, Солнце, Воздух — сразу по-новому
             for name in ("refresh", "refresh_weather"):
-                if w.key in ("weather", "meteoclock", "sun") and hasattr(w, name):
+                if w.key in ("weather", "meteoclock", "sun", "air") and hasattr(w, name):
                     getattr(w, name)()
 
     def add_actions(self, menu):

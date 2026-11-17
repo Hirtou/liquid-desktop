@@ -43,19 +43,34 @@ class AirWidget(DesktopWidget):
         menu.addAction(tr("Обновить"), lambda: self.refresh(force=True))
 
     def refresh(self, force=False):
-        if not force and time.time() - AirWidget.cache.get("time", 0) < 25 * 60:
-            return
         place = config.section("weather")
         if "lat" not in place or "lon" not in place:
             self.error = tr("Сначала выбери город в «Погоде»")
             self.update()
+            if not getattr(self, "wait_city", False):  # город выберут позже — подхватим сами (один таймер)
+                self.wait_city = True
+                QTimer.singleShot(60 * 1000, self._city_retry)
             return
-        threading.Thread(target=self._fetch, args=(place["lat"], place["lon"]), daemon=True).start()
+        where = (round(place["lat"], 3), round(place["lon"], 3))
+        # кэш — только для того же места: сменили город в «Погоде» — сразу новый запрос (раньше 25 минут
+        # показывался воздух старого города, и «Воздух» не обновлялся вместе с погодой)
+        if not force and AirWidget.cache.get("where") == where and time.time() - AirWidget.cache.get("time", 0) < 25 * 60:
+            if self.data is not AirWidget.cache.get("data"):
+                self.data, self.error = AirWidget.cache.get("data", {}), ""
+                self.update()
+            return
+        if self.error.startswith(tr("Сначала")):
+            self.error = ""
+        threading.Thread(target=self._fetch, args=(place["lat"], place["lon"], where), daemon=True).start()
+
+    def _city_retry(self):
+        self.wait_city = False
+        self.refresh()
 
     def retry(self):
         self.refresh(force=True)
 
-    def _fetch(self, lat, lon):
+    def _fetch(self, lat, lon, where=None):
         try:
             answer = get_json(URL, latitude=lat, longitude=lon, current="european_aqi,pm2_5,pm10,nitrogen_dioxide", timezone="auto")
             data = {k: answer["current"][k] for k in ("european_aqi", "pm2_5", "pm10", "nitrogen_dioxide")}
@@ -64,19 +79,21 @@ class AirWidget(DesktopWidget):
         except Exception as ex:
             applog.error("air.AirWidget._fetch", ex)
             data = {"error": type(ex).__name__}
+        data["_where"] = where
         try:
             self.loaded.emit(data)
         except RuntimeError:  # виджет уже закрыли
             pass
 
     def show_data(self, data):
+        where = data.pop("_where", None)
         if "error" in data:
             self.error = tr("нет связи ({})").format(data["error"])
             QTimer.singleShot(60 * 1000, self.retry)
         else:
             self.error = ""
             self.data = data
-            AirWidget.cache.update(data=data, time=time.time())
+            AirWidget.cache.update(data=data, time=time.time(), where=where)
         self.update()
 
     def paintEvent(self, event):

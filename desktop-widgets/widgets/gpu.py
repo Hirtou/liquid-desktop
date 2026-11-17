@@ -208,7 +208,8 @@ def query():
         try:
             return NVAPI.read()
         except Exception as _err:
-            applog.error("gpu.query", _err)
+            # бывает на ноутбуках с двумя картами (NVIDIA спит) — не ошибка, просто берём цифры другим путём
+            applog.warn(f"видеокарта: NVAPI не отдал данные ({_err}) — читаю через NVML/Windows")
             NVAPI.ok = False  # драйвер обновился и т.п. — дальше через nvml
     if NVML is None:
         NVML = Nvml()

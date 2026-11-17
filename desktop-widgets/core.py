@@ -221,7 +221,7 @@ class Activity:
         cur = wt.POINT()  # где мышь (физические пиксели): виджетам на другом мониторе она ничего не меняет
         glass.user32.GetCursorPos(ctypes.byref(cur))
         # окно впереди (физ. пиксели): виджеты, которые оно закрывает целиком, не видны — их стекло не снимаем
-        cover = glass.cover_rect(glass.user32.GetForegroundWindow()) if self.mode == "window" else None
+        cover = self.front_cover()
         for w in self.widgets():
             # кому пора — и заодно тем, кому скоро (до 40% интервала, не больше 0.2 с): один снимок монитора
             # на всех, а не по одному
@@ -341,7 +341,7 @@ class Activity:
         if mode == "fullscreen":  # на каком мониторе игра (её могли перетащить — смотрим каждый раз, это дёшево)
             self.fs_monitor = glass.window_rect(glass.user32.GetForegroundWindow())[1]
         # окно впереди: виджеты, которые оно закрывает целиком, анимацию не рисуют (см. covered)
-        cover = glass.cover_rect(glass.user32.GetForegroundWindow()) if self.mode == "window" else None
+        cover = self.front_cover()
         if cover != self.cover or refresh:
             self.cover = cover
             self.changed_at = now = time.monotonic()
@@ -378,6 +378,17 @@ class Activity:
             if w.isVisible():
                 w.due, w.same = 0.0, 0
         self.tick()
+
+    def front_cover(self):
+        """Где окно впереди (физ. пиксели) или None. Кликнули по самому виджету — впереди его же окно: раньше оно
+        «закрывало» само себя, и визуализатор, часы и стекло замирали до клика по другому окну. Свои виджеты
+        окном впереди не считаем."""
+        if self.mode != "window":
+            return None
+        fg = glass.user32.GetForegroundWindow()
+        if not fg or any(int(w.winId()) == int(fg) for w in self.widgets() if w.placed):
+            return None
+        return glass.cover_rect(fg)
 
     def covered(self, w):
         """Виджета сейчас не видно: игра на весь экран или окно впереди закрывает его целиком.
@@ -436,6 +447,7 @@ def set_skin(skin_id):
     for w in QApplication.topLevelWidgets():
         if isinstance(w, DesktopWidget):
             w.last_src = None      # иначе «фон не изменился» — и стекло не пересчитается
+            w.desk_glass = None    # запасное стекло «над чистым столом» — в старой теме
             w.flat_key = None
             w._chrome_key = None
             w.rebuild()
@@ -881,7 +893,12 @@ class DesktopWidget(QWidget):
         # у живого акрила стекло сплошное (просвечивает размытое, а не резкое) — «Заливка» только у изморози
         fill = None if app.get("acrylic", True) else app.get("fill")
         blur, haze = skins.glass_params(app.get("blur"), app.get("haze"))
-        args = (self.gen, card.width(), card.height(), skins.theme(self.glass_theme()), self.last_src,
+        # Тему сменили, пока считалось прошлое стекло: оно вернулось в старой теме и запомнило фон — следующий
+        # заказ видел «фон тот же» и не пересчитывал. Поэтому снимок, посчитанный в другой теме, — не «прошлый».
+        self._gen_ver = getattr(self, "_gen_ver", {})
+        self._gen_ver[self.gen] = skins.version
+        last = self.last_src if getattr(self, "glass_ver", None) == skins.version else None
+        args = (self.gen, card.width(), card.height(), skins.theme(self.glass_theme()), last,
                 (fill, blur, haze), self.theme_prev())
         if self.live:
             # масштаб виджета — как лишний «dpr»: снимаем увеличенный кусок экрана, ужимаем до обычного размера
@@ -1056,6 +1073,9 @@ class DesktopWidget(QWidget):
 
     def apply(self, result):
         gen, payload = result
+        ver = getattr(self, "_gen_ver", {}).pop(gen, None)
+        for g in [g for g in getattr(self, "_gen_ver", {}) if g < gen]:
+            self._gen_ver.pop(g, None)
         if gen < self.shown_gen:  # пока считалось, уже показали стекло новее
             return
         if self.flat_mode():
@@ -1068,6 +1088,9 @@ class DesktopWidget(QWidget):
         if payload:
             self.shown_gen = gen
             self.last_src, self.glass_img, dark = payload
+            self.glass_ver = ver
+            if ver != skins.version:  # посчитано в старой теме — сразу заказать заново
+                QTimer.singleShot(0, self.rebuild)
             # стекло над чистым рабочим столом (впереди ничего нет и уже секунду ничего не менялось) —
             # запоминаем: его покажем сразу, когда окно свернут (см. Activity.check)
             if activity.mode == "desktop" and time.monotonic() - getattr(activity, "changed_at", 0.0) > 1.0:

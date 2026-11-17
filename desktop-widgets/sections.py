@@ -616,7 +616,7 @@ class WeatherPage(QWidget):
         """Виджеты погоды на столе — обновить."""
         for w in activity.widgets():
             for name in ("refresh", "refresh_weather"):
-                if w.key in ("weather", "meteoclock", "sun") and hasattr(w, name):
+                if w.key in ("weather", "meteoclock", "sun", "air") and hasattr(w, name):
                     getattr(w, name)()
         QTimer.singleShot(4000, self.load)
 

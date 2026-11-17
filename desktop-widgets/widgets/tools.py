@@ -47,7 +47,18 @@ def launch(key):
     _, _, _, _, target, params = TOOLS[key]
     if key == "terminal" and not shutil.which("wt"):  # нет Терминала Windows — обычный PowerShell
         target = "powershell.exe"
-    ctypes.windll.shell32.ShellExecuteW(None, "open", target, params, None, 1)
+    if target.endswith(".cpl"):  # апплеты панели управления: «open» на .cpl в новых Windows часто молчит
+        target, params = "control.exe", target
+    rc = ctypes.windll.shell32.ShellExecuteW(None, "open", target, params, None, 1)
+    if rc <= 32:  # не открылось — пробуем через «Выполнить»-путь (explorer), и пишем в журнал
+        try:
+            import applog
+            applog.warn(f"инструменты: {key} не открылся ({target} {params or ''}, код {rc})")
+        except Exception:
+            pass
+        ctypes.windll.shell32.ShellExecuteW(None, "open", "explorer.exe",
+                                            "shell:::{7007ACC7-3202-11D1-AAD2-00805FC1270E}" if key == "adapters"
+                                            else target, None, 1)
 
 
 class ToolsWidget(DesktopWidget):

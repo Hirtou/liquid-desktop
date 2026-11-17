@@ -490,8 +490,8 @@ class Preview(QWidget):
         if w.layout():  # у метеочасов раскладки нет — они рисуются сами
             w.layout().activate()
             w.adjustSize()
-        if (w.width(), w.height(), dark) != self.key:
-            self.key = (w.width(), w.height(), dark)
+        if (w.width(), w.height(), dark, skins.version) != self.key:  # тема — стекло превью пересчитать
+            self.key = (w.width(), w.height(), dark, skins.version)
             self._build(dark)
         self.pix = w.grab()
         # куда класть снимок — запоминаем: после release() копии нет, а последний кадр каталог показывает

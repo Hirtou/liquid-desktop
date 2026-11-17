@@ -16,6 +16,21 @@ from core import DesktopWidget, activity, grid
 from widgets import kit
 
 
+def app_icon(img):
+    """Похоже на значок программы, а не на обложку: обложки непрозрачные и не крошечные, у значка — прозрачные
+    углы/фон. Смотрим сетку 12×12 точек: больше 8% прозрачных — значок."""
+    if img.isNull():
+        return True
+    w, h = img.width(), img.height()
+    if max(w, h) <= 64:
+        return True
+    if not img.hasAlphaChannel():
+        return False
+    clear = sum(img.pixelColor(int((x + 0.5) * w / 12), int((y + 0.5) * h / 12)).alpha() < 40  # у обложек Spotify края полупрозрачные (~180) — это не значок
+                for x in range(12) for y in range(12))
+    return clear > 144 * 0.08
+
+
 class VisualizerWidget(DesktopWidget):
     key = "visualizer"
     title = tr("Визуализатор")
@@ -110,6 +125,10 @@ class VisualizerWidget(DesktopWidget):
     def on_media(self, state):
         state = state or {}
         cover = state.get("cover")
+        if cover is not None and id(cover) != getattr(self, "_icon_id", None):
+            self._icon_id, self._icon_is = id(cover), app_icon(cover)  # проверяем раз на картинку, не каждую секунду
+        if cover is not None and self._icon_is:
+            cover = None  # вместо обложки Windows отдала значок программы (браузер, Telegram) — рисуем свою плитку
         sig = (state.get("title"), state.get("artist"), id(cover))
         self.track, self.artist, self.cover = state.get("title") or "", state.get("artist") or "", cover
         if sig != self._media_sig:

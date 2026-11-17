@@ -19,6 +19,30 @@ BROWSERS = ("chrome", "msedge", "firefox", "opera", "brave", "vivaldi", "browser
 PLAYING = 4  # статус медиа-панели: 4 — играет, 5 — пауза
 
 
+def looks_like_icon(img, browser=False):
+    """Вместо обложки Windows иногда отдаёт значок программы (Chrome без обложки, YouTube Music с анимированной
+    обложкой) — его не рисуем, будет своя плитка. Значок: крошечный, или с прозрачным фоном вокруг (у обложек
+    Spotify края полупрозрачные, поэтому считаем только почти прозрачные точки), или — у браузера — небольшой
+    квадрат на сплошном фоне: все углы и середины краёв одного цвета."""
+    if img is None or img.isNull():
+        return True
+    w, h = img.width(), img.height()
+    if max(w, h) <= 64:
+        return True
+    if img.hasAlphaChannel():
+        clear = sum(img.pixelColor(int((x + 0.5) * w / 12), int((y + 0.5) * h / 12)).alpha() < 40
+                    for x in range(12) for y in range(12))
+        if clear > 144 * 0.08:
+            return True
+    if browser and max(w, h) <= 256:
+        pts = [(2, 2), (w - 3, 2), (2, h - 3), (w - 3, h - 3), (w // 2, 2), (w // 2, h - 3), (2, h // 2), (w - 3, h // 2)]
+        cols = [img.pixelColor(x, y) for x, y in pts]
+        c0 = cols[0]
+        if all(abs(c.red() - c0.red()) + abs(c.green() - c0.green()) + abs(c.blue() - c0.blue()) <= 12 for c in cols):
+            return True
+    return False
+
+
 def window_titled(text):
     """Есть ли видимое окно с такой подписью. Вкладка браузера в медиа-панели — просто «Chrome»; что это YouTube Music,
     видно только по заголовку окна (пока вкладка активна)."""
@@ -198,6 +222,8 @@ class Media(QObject):
             except Exception as _err:
                 applog.error("media.Media._read", _err)
                 self.cover = None
+            if self.cover is not None and looks_like_icon(self.cover, any(b in s.source_app_user_model_id.lower() for b in BROWSERS)):
+                self.cover = None  # значок браузера/программы вместо обложки — рисуем свою плитку
         app = s.source_app_user_model_id.split("!")[-1].replace(".exe", "")
         # вкладку могли переключить: песня остаётся той же
         if key != self.source_key or self.source not in ("ytmusic", "yandex", "soundcloud"):
