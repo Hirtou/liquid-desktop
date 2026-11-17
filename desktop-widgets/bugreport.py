@@ -18,8 +18,11 @@ BOOSTY = "https://boosty.to/liquiddesktop"  # «Поддержать автор�
 HERE = os.path.dirname(os.path.abspath(__file__))
 PARENT = os.path.dirname(HERE)
 MAX_URL = 7500          # длиннее GitHub и браузеры обрезают
+STAMP = re.compile(r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d")      # запись журнала начинается со времени
+ERR_TAG = re.compile(r"\S+ \S+ (ERR|CRASH|QT)")              # …и это запись об ошибке (applog.py)
+_ISLAND = [os.path.join(PARENT, d, "island.log") for d in ("dynamic-island", "остров")]
 LOGS = [("widgets", os.path.join(HERE, "widgets.log")),
-        ("island", os.path.join(PARENT, "dynamic-island", "island.log"))]
+        ("island", next((p for p in _ISLAND if os.path.exists(p)), _ISLAND[0]))]
 
 
 def version():
@@ -63,17 +66,21 @@ def last_error(path, limit):
         return ""
     lines = text.splitlines()
     start = None
+    marks = ("[падение]", "[ошибка]", "Traceback", "Fatal Python error", "Windows fatal exception")
     for i in range(len(lines) - 1, -1, -1):
-        s = lines[i]
-        if s.startswith("Traceback") or "Fatal Python error" in s or "Windows fatal exception" in s:
+        if any(m in lines[i] for m in marks):
             start = i
+            # traceback под заголовком записи — брать с заголовка: там где случилось и что за ошибка
+            while start > 0 and "Traceback" in lines[start] and ("[ошибка]" in lines[start - 1]
+                                                                  or "[падение]" in lines[start - 1]):
+                start -= 1
             break
     if start is None:
         return ""
     block = lines[start:start + 40]
-    # дальше нового «=== запуск» не берём
+    # дальше нового «=== запуск» и следующей обычной записи журнала не берём
     for j, s in enumerate(block[1:], 1):
-        if s.startswith("=== "):
+        if s.startswith("=== ") or (STAMP.match(s) and not ERR_TAG.match(s)):
             block = block[:j]
             break
     out = sanitize("\n".join(block).strip())

@@ -20,3 +20,9 @@ claude_status.json.lock
 stopped
 
 *.broken-*.json
+
+# Never publish: bot token, private usage data / Не выкладывать: токен бота, личная статистика
+telegram.json
+claude_usage.json
+update_usage.py
+desktop-widgets/widgets/limits.py

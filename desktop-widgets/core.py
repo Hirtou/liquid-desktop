@@ -1,4 +1,6 @@
 """Общее для всех виджетов: настройки (config.json) и окно-виджет на рабочем столе."""
+import applog
+import skins
 from lang import tr
 import ctypes
 import json
@@ -260,8 +262,8 @@ class Activity:
         """Фоновый поток: один снимок на монитор, дальше каждый виджет — своё стекло."""
         try:
             shots = glass.capture_many(monitor, [rect for _, _, rect in items])
-        except Exception:
-            traceback.print_exc()
+        except Exception as _err:
+            applog.error("core.Activity.capture_group", _err)
             shots = [None] * len(items)
         try:
             for (w, args, _), src in zip(items, shots):
@@ -420,6 +422,43 @@ class ScaledPainter(QPainter):
             k = args[0].scale()
             if k != 1:
                 self.scale(k, k)
+
+
+_GLOW_CACHE = {}  # свечение темы «Неон»: (ш, в, тема, плотность пикселей) -> картинка
+
+
+def set_skin(skin_id):
+    """Сменить тему оформления: запомнить, перекрасить акцент и пересчитать стекло у всех виджетов сразу."""
+    config.section("app")["skin"] = skin_id
+    config.save()
+    skins.apply(skin_id)
+    applog.line(f"тема оформления: {skins.current_id()}")
+    for w in QApplication.topLevelWidgets():
+        if isinstance(w, DesktopWidget):
+            w.last_src = None      # иначе «фон не изменился» — и стекло не пересчитается
+            w.flat_key = None
+            w._chrome_key = None
+            w.rebuild()
+            w.update()
+        else:
+            w.update()
+
+
+def skin_menu(menu):
+    """Подменю «Тема» (в меню виджета и в трее)."""
+    sub = menu.addMenu(tr("Тема"))
+    acts = {}
+    for sid in skins.ORDER:
+        s = skins.SKINS[sid]
+        a = acts[sid] = sub.addAction(f"{s['name']} — {s['sub']}", lambda i=sid: set_skin(i))
+        a.setCheckable(True)
+
+    def mark():  # галочка у текущей — при каждом открытии (меню в трее живёт всё время)
+        for sid, a in acts.items():
+            a.setChecked(skins.current_id() == sid)
+    sub.aboutToShow.connect(mark)
+    mark()
+    return sub
 
 
 class DesktopWidget(QWidget):
@@ -802,14 +841,24 @@ class DesktopWidget(QWidget):
         QTimer.singleShot(0, self.keep_on_screen)
         self.setup_capture()
         self.sync_topmost()
-        if getattr(self, "_skip_fade", False) or self.desktop_attached():
+        # разворачивают из свёрнутого (значок на панели задач, Alt+Tab) — показ от самой Windows (spontaneous),
+        # со своей анимацией: наше плавное появление поверх неё гасило уже показанное окно до нуля —
+        # «открылось, пропало, снова открылось»
+        if getattr(self, "_skip_fade", False) or self.desktop_attached() or event.spontaneous():
             self._skip_fade = False
+            if event.spontaneous() and self.windowOpacity() < 1:
+                self.setWindowOpacity(1.0)
             return
         self.setWindowOpacity(0)
         self.fade = QPropertyAnimation(self, b"windowOpacity", self, duration=260, startValue=0.0, endValue=1.0)
         self.fade.start()
 
     # ---------- стекло ----------
+
+    def glass_theme(self):
+        """Светлое/тёмное/авто стекло: своё у виджета, а если не задано — общее из каталога («Тема» внизу окна).
+        Без этого виджет, появившийся после выбора темы, брал «авто» и над светлым фоном был белым, не как все."""
+        return self.cfg.get("theme") or config.section("app").get("theme", "auto")
 
     def set_dark(self, dark):
         if dark == self.dark:
@@ -831,8 +880,9 @@ class DesktopWidget(QWidget):
         app = config.section("app")
         # у живого акрила стекло сплошное (просвечивает размытое, а не резкое) — «Заливка» только у изморози
         fill = None if app.get("acrylic", True) else app.get("fill")
-        args = (self.gen, card.width(), card.height(), self.cfg.get("theme", "auto"), self.last_src,
-                (fill, app.get("blur"), app.get("haze")), self.theme_prev())
+        blur, haze = skins.glass_params(app.get("blur"), app.get("haze"))
+        args = (self.gen, card.width(), card.height(), skins.theme(self.glass_theme()), self.last_src,
+                (fill, blur, haze), self.theme_prev())
         if self.live:
             # масштаб виджета — как лишний «dpr»: снимаем увеличенный кусок экрана, ужимаем до обычного размера
             win, monitor = glass.window_rect(int(self.winId()))
@@ -859,16 +909,16 @@ class DesktopWidget(QWidget):
             if src is not None and changed(src, last):
                 img, dark = glass.render(src, w, h, RADIUS, theme, fill, blur_r, haze, prev)
                 return gen, (src, img, dark)
-        except Exception:
-            traceback.print_exc()
+        except Exception as _err:
+            applog.error("core.DesktopWidget._render", _err)
         return gen, None
 
     @staticmethod
     def _compute(args, how):
         try:
             src = glass.capture(*how) if isinstance(how, tuple) else how
-        except Exception:
-            traceback.print_exc()
+        except Exception as _err:
+            applog.error("core.DesktopWidget._compute", _err)
             src = None
         return DesktopWidget._render(args, src)
 
@@ -960,15 +1010,15 @@ class DesktopWidget(QWidget):
     def update_flat(self):
         """Стекло-изморозь (под ярлыками и под окнами при живых обоях): считается один раз на размер и тему."""
         card = self.card()
-        theme = self.cfg.get("theme", "auto")
+        theme = skins.theme(self.glass_theme())
         if theme == "auto":
             screen = QGuiApplication.screenAt(self.pos()) or QGuiApplication.primaryScreen()
             dark = glass.wallpaper_is_dark(screen.geometry(), card.translated(self.pos()))
         else:
             dark = theme == "dark"
         fill = config.section("app").get("fill")
-        if self.flat_key != (card.size(), dark, fill):
-            self.flat_key = (card.size(), dark, fill)
+        if self.flat_key != (card.size(), dark, fill, skins.version):
+            self.flat_key = (card.size(), dark, fill, skins.version)
             self.glass_img = glass.render_flat(card.width(), card.height(), RADIUS, dark, fill)
             self.shadow_img = glass.render_shadow(card.width(), card.height(), RADIUS, SHADOW, dark)
             self.set_dark(dark)
@@ -1072,10 +1122,10 @@ class DesktopWidget(QWidget):
         super().moveEvent(event)
         self._rect_cache = None  # covered() — снова спросить Windows, где окно
         self.follow_backdrop()
-        if self._drag is not None:
-            self.rebuild_now()
-        else:
-            self.rebuild()
+        # и при перетаскивании — в фоне: снимок + стекло ~10–15 мс, а мышь шлёт сотни сдвигов в секунду;
+        # считать на каждом сдвиге в главном потоке — окно не поспевало за мышью и дёргалось.
+        # Заказы склеиваются (rebuild: busy/pending) — стекло догоняет окно за кадр, окно едет без задержки
+        self.rebuild()
 
     def resizeEvent(self, event):
         self.rebuild()
@@ -1113,7 +1163,7 @@ class DesktopWidget(QWidget):
             return None
         dpr = self.devicePixelRatioF()
         key = (self.glass_img.cacheKey() if glass_ok else 0, self.shadow_img.cacheKey() if self.shadow_img else 0,
-               bool(self.dark), self.size().toTuple(), self.scale(), dpr)
+               bool(self.dark), self.size().toTuple(), self.scale(), dpr, skins.version)
         if getattr(self, "_chrome_key", None) != key:
             self._chrome_key = key
             pix = QPixmap(int(self.width() * dpr), int(self.height() * dpr))
@@ -1127,6 +1177,7 @@ class DesktopWidget(QWidget):
             card = QRectF(self.card())
             if self.shadow_img:
                 p.drawImage(0, 0, self.shadow_img)
+            self._glow(p, card)
             if glass_ok:
                 p.drawImage(card.topLeft(), self.glass_img)
             self._rim(p, card)
@@ -1135,15 +1186,34 @@ class DesktopWidget(QWidget):
         return self._chrome_pix
 
     def _rim(self, p, card):
-        # тонкая световая обводка (光感描边): чуть ярче сверху и снизу, тоньше по бокам
-        rim = QLinearGradient(card.topLeft(), card.bottomLeft())
-        a = 0.55 if self.dark else 1.0
-        rim.setColorAt(0, QColor(255, 255, 255, int(150 * a)))
-        rim.setColorAt(0.5, QColor(255, 255, 255, int(45 * a)))
-        rim.setColorAt(1, QColor(255, 255, 255, int(130 * a)))
-        p.setPen(QPen(rim, 1.0))
+        # тонкая световая обводка (光感描边): чуть ярче сверху и снизу, тоньше по бокам; цвет — от темы оформления
+        rim, width = skins.rim_pen(card, self.dark)
+        p.setPen(QPen(rim, width))
         p.setBrush(Qt.NoBrush)
-        p.drawRoundedRect(card.adjusted(0.5, 0.5, -0.5, -0.5), RADIUS, RADIUS)
+        inset = width / 2
+        p.drawRoundedRect(card.adjusted(inset, inset, -inset, -inset), RADIUS, RADIUS)
+
+    def _glow(self, p, card):
+        """Ореол вокруг карточки (тема «Неон»): кромка, размытая в мягкое свечение, в поле тени.
+        От фона не зависит — считается раз на размер карточки и тему, дальше копируется картинка."""
+        cols = skins.glow_colors()
+        if cols is None:
+            return
+        res = p.device().devicePixelRatioF() * p.transform().m11()
+        key = (round(card.width()), round(card.height()), skins.version, round(res, 3))
+        img = _GLOW_CACHE.get(key)
+        M = SHADOW  # ореол помещается в поле тени вокруг карточки
+        if img is None:
+            shape = QPainterPath()
+            shape.addRoundedRect(QRectF(0, 0, card.width(), card.height()), RADIUS, RADIUS)
+            img = skins.glow_image(shape, card.width(), card.height(), M, cols[0], cols[1], res=res)
+            if len(_GLOW_CACHE) > 64:
+                _GLOW_CACHE.clear()
+            _GLOW_CACHE[key] = img
+        p.save()
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
+        p.drawImage(QRectF(card.x() - M, card.y() - M, card.width() + 2 * M, card.height() + 2 * M), img)
+        p.restore()
 
     def changeEvent(self, event):
         # виджет — часть рабочего стола: «свернуть все» (Win+D и т.п.) не должно его сворачивать
@@ -1229,11 +1299,12 @@ class DesktopWidget(QWidget):
             sizes.addSeparator()
             sizes.addAction(tr("Ctrl + колесо мыши — плавнее")).setEnabled(False)
         self.add_actions(menu)
+        skin_menu(menu)
         themes = menu.addMenu(tr("Стекло"))
         for name, text in (("auto", tr("Авто (по обоям)")), ("light", tr("Светлое")), ("dark", tr("Тёмное"))):
             a = themes.addAction(text, lambda n=name: self.set_theme(n))
             a.setCheckable(True)
-            a.setChecked(self.cfg.get("theme", "auto") == name)
+            a.setChecked(self.glass_theme() == name)
         menu.addAction(tr("Скрыть"), self.hide_by_user)
         menu.exec(event.globalPos())
 

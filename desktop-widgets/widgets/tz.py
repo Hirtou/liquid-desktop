@@ -2,6 +2,7 @@
 (и сразу следом, если пояс в Windows сменили — см. glass.refresh_timezone); правый клик → «Часовой пояс» —
 любой город из списка или свой пояс («Europe/Moscow», «UTC+5»).
 Города хранятся по-русски (как в «Мировом времени»), на экране — через tr()."""
+import applog
 from lang import tr
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -44,7 +45,8 @@ def now(cfg):
     """Время для часов: по их поясу, «Авто» — как в Windows."""
     try:
         zone = zone_of(cfg.get("tz"))
-    except Exception:  # испорченная настройка или пояса нет в базе — как в Windows
+    except Exception as _err:  # испорченная настройка или пояса нет в базе — как в Windows
+        applog.error("tz.now", _err)
         zone = None
     return datetime.now(zone) if zone is not None else datetime.now()
 
@@ -91,7 +93,8 @@ def ask_zone(widget):
         return
     try:
         zone_of(text.strip())
-    except Exception:
+    except Exception as _err:
+        applog.error("tz.ask_zone", _err)
         QMessageBox.information(None, tr("Часовой пояс"), tr("Такого пояса нет. Пример: Europe/Moscow или UTC+5."))
         return
     set_zone(widget, text.strip())

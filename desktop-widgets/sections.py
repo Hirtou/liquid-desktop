@@ -1,4 +1,4 @@
-"""Разделы общего окна (каталог виджетов): «Остров» и «Погода». Раздел «Виджеты» — сам каталог в main.py.
+"""Разделы общего окна (каталог виджетов): «Остров», «Погода» и «Темы». Раздел «Виджеты» — сам каталог в main.py.
 
 Остров — отдельная программа со своим config.json (папка «остров» или «dynamic-island» рядом с виджетами).
 Раздел «Остров» правит этот файл, остров замечает изменение сам (следит за файлом) и сразу применяет.
@@ -9,12 +9,14 @@ import os
 import threading
 import time
 
-from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QKeySequence
+from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
+from PySide6.QtGui import (QColor, QConicalGradient, QFont, QKeySequence, QLinearGradient, QPainter, QPainterPath,
+                           QPen, QPixmap)
 from PySide6.QtWidgets import (QAbstractButton, QFrame, QGraphicsOpacityEffect, QGridLayout, QHBoxLayout, QLabel,
-                               QKeySequenceEdit, QLineEdit, QSlider, QVBoxLayout, QWidget)
+                               QKeySequenceEdit, QLineEdit, QSizePolicy, QSlider, QVBoxLayout, QWidget)
 
-from core import ROOT, activity, config
+import skins
+from core import ROOT, activity, config, set_skin
 from lang import LANGS, tr
 
 
@@ -125,12 +127,12 @@ class IslandConfig:
 
 
 def set_active(w, on):
-    """Сейчас не поменять — полупрозрачно (свои переключатели рисуются сами и «серого» вида не знают)."""
+    """Сейчас не поменять — бледно. Без QGraphicsOpacityEffect: страница въезжает с таким же эффектом,
+    а эффект внутри эффекта Qt не рисует — отключённые переключатели пропадали на время перелистывания.
+    Свои переключатели (Switch, Segmented) бледнеют сами, ползунок — стилем «disabled»."""
     w.setEnabled(on)
-    if on:
+    if isinstance(w.graphicsEffect(), QGraphicsOpacityEffect):
         w.setGraphicsEffect(None)
-    elif not isinstance(w.graphicsEffect(), QGraphicsOpacityEffect):
-        w.setGraphicsEffect(QGraphicsOpacityEffect(w, opacity=0.4))
 
 
 LOOK_DEFAULT = {"acrylic": True, "blur": 6, "haze": 50, "fill": 62, "theme": "dark"}
@@ -618,3 +620,212 @@ class WeatherPage(QWidget):
                     getattr(w, name)()
         QTimer.singleShot(4000, self.load)
 
+def update_snapshot(done=None):
+    """Погода для острова без виджета: скачать для выбранного места и записать weather_now.json / weather_alert.json.
+    Фоновый поток; done() — по окончании (из него же)."""
+    from widgets import weather as W
+
+    def work():
+        data = W.fetch(dict(config.section("weather")))
+        if "error" not in data:
+            try:
+                now = W.now_values(data)
+                W.save_now(data, now)
+                W.save_alert(W.weather_alert(data))
+            except (KeyError, TypeError, ValueError, IndexError):
+                pass
+        if done:
+            try:
+                done()
+            except RuntimeError:
+                pass
+    threading.Thread(target=work, daemon=True).start()
+
+
+class ThemeCard(QAbstractButton):
+    """Карточка темы: мини-виджет в её стекле, кромке и акценте; выбранная — с галочкой."""
+    W, H = 232, 168
+
+    def __init__(self, skin_id):
+        super().__init__()
+        self.skin_id = skin_id
+        # ширина — по окну: карточки делят ряд поровну (без пустоты справа); высота постоянная
+        self.setFixedHeight(self.H)
+        self.setMinimumWidth(self.W)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setCursor(Qt.PointingHandCursor)
+        s = skins.SKINS[skin_id]
+        self.setToolTip(f"{s['name']} — {s['sub']}")
+        self.hover = False
+
+    def enterEvent(self, event):
+        self.hover = True
+        self.update()
+
+    def leaveEvent(self, event):
+        self.hover = False
+        self.update()
+
+    def paintEvent(self, event):
+        """Карточка — готовой картинкой: при перелистывании вкладки (анимация) её рисуют каждый кадр,
+        а меняется она только от темы, выбора и наведения."""
+        dpr = self.devicePixelRatioF()
+        key = (skins.version, skins.current_id() == self.skin_id, self.hover, dpr, self.width(),
+               self.palette().windowText().color().rgba())
+        if getattr(self, "_pix_key", None) != key:
+            self._pix_key = key
+            pix = QPixmap(int(self.width() * dpr), int(self.H * dpr))
+            pix.setDevicePixelRatio(dpr)
+            pix.fill(Qt.transparent)
+            p = QPainter(pix)
+            self._paint(p)
+            p.end()
+            self._pix = pix
+        p = QPainter(self)
+        p.drawPixmap(0, 0, self._pix)
+        p.end()
+
+    def _paint(self, p):
+        tint, k, rim, glow, acc, acc2, dark = skins.preview(self.skin_id)
+        s = skins.SKINS[self.skin_id]
+        chosen = skins.current_id() == self.skin_id
+        p.setRenderHints(QPainter.Antialiasing | QPainter.TextAntialiasing)
+        W = self.width()
+        box = QRectF(8, 8, W - 16, 102)
+        ox = box.left() + (box.width() - (self.W - 16)) / 2  # мини-виджет — по центру стекла любой ширины
+        path = QPainterPath()
+        path.addRoundedRect(box, 18, 18)
+        if glow is not None:  # свечение «Неона»
+            p.setBrush(Qt.NoBrush)
+            for i in range(5):
+                d = 1 + i * 1.4
+                r = box.adjusted(-d, -d, d, d)
+                p.setPen(skins.glow_pen(r, glow[0], glow[1], 150 * (1 - i / 5) ** 1.6))
+                p.drawRoundedRect(r, 18 + d, 18 + d)
+        # стекло: тёмная основа + оттенок темы
+        p.fillPath(path, QColor(18, 19, 26, 200) if dark else QColor(40, 44, 54, 150))
+        if tint is not None:
+            if isinstance(tint, tuple):
+                g = QLinearGradient(box.topLeft(), box.bottomRight())
+                c1, c2 = QColor(tint[0]), QColor(tint[1])
+                c1.setAlphaF(k)
+                c2.setAlphaF(k)
+                g.setColorAt(0, c1)
+                g.setColorAt(1, c2)
+                p.fillPath(path, g)
+            else:
+                c = QColor(tint)
+                c.setAlphaF(min(1.0, k + 0.1))
+                p.fillPath(path, c)
+        sheen = QLinearGradient(box.topLeft(), box.bottomLeft())
+        sheen.setColorAt(0, QColor(255, 255, 255, 22))
+        sheen.setColorAt(0.4, QColor(255, 255, 255, 0))
+        p.fillPath(path, sheen)
+        rg = QLinearGradient(box.topLeft(), box.bottomLeft())
+        for at, c in ((0, rim[0]), (1, rim[1])):
+            c = QColor(c)
+            c.setAlpha(240 if glow is not None else 150)
+            rg.setColorAt(at, c)
+        p.setPen(QPen(rg, 1.8 if glow is not None else 1.0))
+        p.setBrush(Qt.NoBrush)
+        p.drawPath(path)
+        # мини-виджет: кольцо акцента, время, кнопка-пилюля
+        c = QPointF(ox + 50, box.center().y())
+        R = 30
+        p.setPen(QPen(QColor(255, 255, 255, 40), 7, Qt.SolidLine, Qt.RoundCap))
+        p.drawEllipse(c, R, R)
+        ring = QConicalGradient(c, 90)
+        ring.setColorAt(0, acc2)
+        ring.setColorAt(1, acc)
+        p.setPen(QPen(ring, 7, Qt.SolidLine, Qt.RoundCap))
+        p.drawArc(QRectF(c.x() - R, c.y() - R, 2 * R, 2 * R), 90 * 16, -250 * 16)
+        f = QFont("Bahnschrift SemiBold")
+        f.setPixelSize(30)
+        p.setFont(f)
+        p.setPen(QColor(245, 246, 251))
+        p.drawText(QRectF(ox + 96, box.top() + 12, 120, 40), Qt.AlignLeft | Qt.AlignVCenter, "07:30")
+        pill = QRectF(ox + 98, box.top() + 58, 92, 26)
+        p.setPen(Qt.NoPen)
+        p.setBrush(acc)
+        p.drawRoundedRect(pill, 13, 13)
+        f = QFont("Segoe UI Semibold")
+        f.setPixelSize(12)
+        p.setFont(f)
+        p.setPen(QColor(255, 255, 255) if acc.lightness() < 170 else QColor(20, 20, 24))
+        p.drawText(pill, Qt.AlignCenter, tr("кнопка"))
+        # подпись
+        fg = QColor(self.palette().windowText().color())
+        f = QFont("Segoe UI Semibold")
+        f.setPixelSize(15)
+        p.setFont(f)
+        p.setPen(fg)
+        p.drawText(QRectF(12, 116, W - 50, 22), Qt.AlignLeft | Qt.AlignVCenter, s["name"])
+        f = QFont("Segoe UI")
+        f.setPixelSize(12)
+        p.setFont(f)
+        fg.setAlpha(150)
+        p.setPen(fg)
+        p.drawText(QRectF(12, 138, W - 24, 20), Qt.AlignLeft | Qt.AlignVCenter, s["sub"])
+        if chosen or self.hover:  # выбранная — обводка акцентом, под мышью — лёгкая
+            pen = QColor(skins.ACCENT) if chosen else QColor(255, 255, 255, 70)
+            p.setPen(QPen(pen, 2.2 if chosen else 1.2))
+            p.setBrush(Qt.NoBrush)
+            p.drawRoundedRect(QRectF(1.5, 1.5, W - 3, self.H - 3), 22, 22)
+        if chosen:
+            dot = QPointF(W - 24, 127)
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(skins.ACCENT))
+            p.drawEllipse(dot, 11, 11)
+            tick = QPainterPath(QPointF(dot.x() - 5, dot.y()))
+            tick.lineTo(dot.x() - 1.5, dot.y() + 3.5)
+            tick.lineTo(dot.x() + 5, dot.y() - 3.5)
+            p.setPen(QPen(QColor(255, 255, 255), 2.2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            p.setBrush(Qt.NoBrush)
+            p.drawPath(tick)
+
+
+class ThemesPage(QWidget):
+    """Темы оформления: одна кнопка меняет стекло, кромку и акцент у всех виджетов, каталога и острова."""
+
+    def __init__(self):
+        super().__init__()
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(12)
+        card = QFrame(objectName="card")
+        box = QVBoxLayout(card)
+        box.setContentsMargins(20, 16, 20, 18)
+        box.setSpacing(10)
+        head = QLabel(tr("Тема оформления"))
+        head.setStyleSheet("font-size: 16px; font-weight: 600;")
+        box.addWidget(head)
+        sub = QLabel(tr("Меняет стекло, кромку и цвет кнопок сразу у всех виджетов и у острова. "
+                        "Liquid — как было до тем; «Авто» берёт цвет из обоев."), objectName="dim", wordWrap=True)
+        sub.setStyleSheet("font-size: 12px;")
+        box.addWidget(sub)
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(14)
+        grid.setVerticalSpacing(14)
+        self.cards = []
+        for i, sid in enumerate(skins.ORDER):
+            c = ThemeCard(sid)
+            c.clicked.connect(lambda _=False, s=sid: self.choose(s))
+            grid.addWidget(c, i // 4, i % 4)
+            self.cards.append(c)
+        for col in range(4):
+            grid.setColumnStretch(col, 1)
+        box.addLayout(grid)
+        lay.addWidget(card)
+        lay.addStretch()
+
+    def choose(self, sid):
+        if sid != skins.current_id():
+            set_skin(sid)
+        for c in self.cards:
+            c.update()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        for c in self.cards:  # тему могли сменить из меню виджета или трея
+            c.update()

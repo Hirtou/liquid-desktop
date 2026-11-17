@@ -3,6 +3,7 @@
 (она тянет библиотеку драйвера на ~22 МБ, и выгрузить её нельзя), нет и её — через nvidia-smi
 (без окна консоли). AMD Radeon и Intel — средствами самой Windows (widgets/gpu_any.py), как Диспетчер задач.
 Ничего не нашлось — так и пишем."""
+import applog
 from lang import tr
 import ctypes
 import os
@@ -192,7 +193,8 @@ def generic():
     if GENERIC.ok:
         try:
             return GENERIC.read()
-        except Exception:
+        except Exception as _err:
+            applog.error("gpu.generic", _err)
             GENERIC.ok = False
     return None
 
@@ -205,14 +207,16 @@ def query():
     if NVAPI.ok:
         try:
             return NVAPI.read()
-        except Exception:
+        except Exception as _err:
+            applog.error("gpu.query", _err)
             NVAPI.ok = False  # драйвер обновился и т.п. — дальше через nvml
     if NVML is None:
         NVML = Nvml()
     if NVML.lib is not None:
         try:
             return NVML.read()
-        except Exception:
+        except Exception as _err:
+            applog.error("gpu.query", _err)
             NVML.lib = None  # драйвер обновился и т.п. — дальше по-старому
     # драйвера NVIDIA нет — карта другой марки (AMD Radeon, Intel): цифры даёт сама Windows
     if GENERIC is not None and GENERIC.ok and GENERIC.vendor != "nvidia":

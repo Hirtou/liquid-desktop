@@ -186,8 +186,9 @@ TILES = {
     "timer": ("#FF8F5A", "#F2542D"), "todo": ("#4CD3A5", "#1FA37A"), "worldclock": ("#3EC7E0", "#1F86C9"),
     "sun": ("#FFB547", "#FF7A2F"), "currency": ("#5ED39B", "#22A06B"), "player": ("#2A2D36", "#121318"),
     "claude": ("#F4EEE6", "#E6DCCF"), "countdown": ("#FF8A5C", "#E5486B"), "water": ("#36D1FF", "#2F6BFF"),
+    "limits": ("#E8875F", "#C2553A"),
     "gpu": ("#8BD12F", "#4F8A10"), "ping": ("#5AB8FF", "#2C7BEA"), "focus": ("#FF8A7A", "#E5486B"),
-    "moon": ("#3B4152", "#1E2230"), "quick": ("#FFC93C", "#F5A623"), "lyrics": ("#2A2D36", "#121318"),
+    "moon": ("#3B4152", "#1E2230"), "quick": ("#FFC93C", "#F5A623"), "tools": ("#4A5366", "#1F2430"), "visualizer": ("#C084FC", "#5B3FD6"), "lyrics": ("#2A2D36", "#121318"),
     "progress": ("#FFC93C", "#F2842D"), "stopwatch": ("#FF6B6B", "#D92D4A"), "calc": ("#4B5263", "#262A36"),
     "processes": ("#60A5FA", "#2F5BEA"), "clipboard": ("#A78BFA", "#6D4AE8"), "habits": ("#4ADE80", "#159A6B"),
     "air": ("#7DD3FC", "#2AA3C9"), "volume": ("#7C5CFF", "#4338CA"), "dice": ("#F87171", "#C92A3E"),
@@ -331,6 +332,32 @@ def _tile_glyph(p, name):
         p.setBrush(white)
         p.drawPolygon([QPointF(56, 16), QPointF(28, 56), QPointF(48, 56), QPointF(42, 84), QPointF(72, 42),
                        QPointF(52, 42)])
+    elif name == "visualizer":  # столбики спектра
+        p.setPen(Qt.NoPen)
+        p.setBrush(white)
+        for i, hgt in enumerate((26, 48, 64, 40, 56, 30)):
+            p.drawRoundedRect(QRectF(18 + i * 11.5, 50 - hgt / 2, 7, hgt), 3.5, 3.5)
+    elif name == "tools":  # окно терминала с «>_»
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(white, 6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        p.drawRoundedRect(QRectF(18, 22, 64, 56), 10, 10)
+        p.drawLine(QPointF(18, 36), QPointF(82, 36))
+        chev = QPainterPath(QPointF(32, 46))
+        chev.lineTo(QPointF(44, 55))
+        chev.lineTo(QPointF(32, 64))
+        p.drawPath(chev)
+        p.drawLine(QPointF(50, 66), QPointF(66, 66))
+    elif name == "limits":  # спидометр: дуга, деления и стрелка
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(QColor(255, 255, 255, 110), 7, Qt.SolidLine, Qt.RoundCap))
+        p.drawArc(QRectF(20, 26, 60, 60), -30 * 16, 240 * 16)
+        p.setPen(QPen(white, 7, Qt.SolidLine, Qt.RoundCap))
+        p.drawArc(QRectF(20, 26, 60, 60), 210 * 16, -170 * 16)
+        p.setPen(QPen(white, 5, Qt.SolidLine, Qt.RoundCap))
+        p.drawLine(QPointF(50, 56), QPointF(66, 42))
+        p.setPen(Qt.NoPen)
+        p.setBrush(white)
+        p.drawEllipse(QPointF(50, 56), 5, 5)
     elif name == "water":  # капля
         path = QPainterPath()
         path.moveTo(50, 18)

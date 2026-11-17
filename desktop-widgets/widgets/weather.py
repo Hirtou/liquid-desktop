@@ -1,5 +1,6 @@
 """Погода с open-meteo.com (бесплатно, без ключа): сейчас, по часам на 12 часов, на 3 дня и подробности —
 ощущается, давление, ветер с порывами, осадки, УФ, восход и закат."""
+import applog
 from lang import LANG, tr
 import json
 import math
@@ -45,6 +46,7 @@ def get_json(url, **params):
     except urllib.error.URLError as ex:
         if not isinstance(ex.reason, ssl.SSLError):
             raise
+        applog.warn(f"погода: https не прошёл ({ex.reason}) — пробую http: {url.split('?')[0]}")
     # у сервера бывает просроченный сертификат — тогда по http
     with urllib.request.urlopen(url.replace("https://", "http://", 1), timeout=10) as r:
         return json.load(r)
@@ -77,7 +79,8 @@ def fetch_station(lat, lon):
     try:
         reports = get_json("https://aviationweather.gov/api/data/metar", format="json", hours=3,
                            bbox=f"{lat - 0.8:.2f},{lon - 1.1:.2f},{lat + 0.8:.2f},{lon + 1.1:.2f}")
-    except Exception:
+    except Exception as _err:
+        applog.error("weather.fetch_station", _err)
         return None
     now = time.time()
     best = None
@@ -277,8 +280,8 @@ def fetch_metno(lat, lon):
             sun = json.load(r)["properties"]
         daily["sunrise"] = [sun["sunrise"]["time"][:16]]
         daily["sunset"] = [sun["sunset"]["time"][:16]]
-    except Exception:
-        pass
+    except Exception as _err:
+        applog.error("weather.fetch_metno", _err)
     return {"current": {"temperature_2m": det["air_temperature"], "weather_code": code,
                         "wind_speed_10m": det.get("wind_speed", 0), "relative_humidity_2m": round(det["relative_humidity"])
                         if det.get("relative_humidity") is not None else None, "is_day": int(is_day),
@@ -401,6 +404,7 @@ def fetch(place):
             try:
                 data = sites[site]()
             except Exception as ex:
+                applog.error(f"погода: источник {site} не ответил", ex)
                 last = ex
                 label = SOURCES[source] if site == source else ("Open-Meteo" if site == "openmeteo" else SOURCES[site])
                 code = getattr(ex, "code", None)
@@ -416,6 +420,7 @@ def fetch(place):
             return data
         raise last
     except Exception as ex:  # нет сети и т.п.
+        applog.error("weather.fetch", ex)
         return {"error": tr("нет связи ({})").format(type(ex).__name__)}
 
 
@@ -435,7 +440,8 @@ def fetch_openmeteo(lat, lon, source):
             at = get_json("https://api.open-meteo.com/v1/forecast", latitude=st["lat"], longitude=st["lon"],
                           elevation=st["elev"], current="temperature_2m")
             st["bias"] = st["temp"] - at["current"]["temperature_2m"]
-    except Exception:
+    except Exception as _err:
+        applog.error("weather.fetch_openmeteo", _err)
         st = None
     data["station"] = st
     return data
@@ -485,7 +491,7 @@ def weather_alert(data, now=None):
     return None
 
 
-NOW_FILE = os.path.join(ROOT, "weather_now.json")  # сводка: «сейчас» для раздела «Погода» в окне настроек
+NOW_FILE = os.path.join(ROOT, "weather_now.json")  # для острова: погода, когда на нём ничего нет
 
 
 def save_now(data, now):
@@ -676,7 +682,8 @@ class WeatherWidget(DesktopWidget):
             return
         try:
             places = find_places(text.strip())
-        except Exception:
+        except Exception as _err:
+            applog.error("weather.WeatherWidget.ask_city", _err)
             places = []
         if not places:
             QMessageBox.information(None, tr("Погода"), tr("Не нашёл такого места. Попробуй по-другому или латиницей."))

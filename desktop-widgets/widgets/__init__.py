@@ -19,6 +19,8 @@ from widgets.gpu import GpuWidget
 from widgets.moon import MoonWidget
 from widgets.ping import PingWidget
 from widgets.quick import QuickWidget
+from widgets.tools import ToolsWidget
+from widgets.visualizer import VisualizerWidget
 from widgets.lyrics import LyricsWidget
 from widgets.meteoclock import MeteoClockWidget
 from widgets.network import NetworkWidget
@@ -35,7 +37,7 @@ from widgets.weather import WeatherWidget
 from widgets.worldclock import WorldClockWidget
 
 # каталог: новый виджет — добавить сюда (и значок в icons.TILES)
-ALL = [PlayerWidget, LyricsWidget, MeteoClockWidget, AnalogClockWidget, ClockWidget, WorldClockWidget,
+ALL = [PlayerWidget, LyricsWidget, VisualizerWidget, MeteoClockWidget, AnalogClockWidget, ClockWidget, WorldClockWidget,
        WeatherWidget, AirWidget, SunWidget, CalendarWidget, ProgressWidget, CountdownWidget, TimerWidget, StopwatchWidget, WaterWidget, HabitsWidget,
        TodoWidget, NotesWidget, ClipboardWidget, CalcWidget, ClaudeWidget, SystemWidget, ProcessesWidget, NetworkWidget, GpuWidget, PingWidget, VolumeWidget,
-       CurrencyWidget, PhotoWidget, GifWidget, FocusWidget, BreatheWidget, DiceWidget, MoonWidget, QuickWidget]
+       CurrencyWidget, PhotoWidget, GifWidget, FocusWidget, BreatheWidget, DiceWidget, MoonWidget, QuickWidget, ToolsWidget]

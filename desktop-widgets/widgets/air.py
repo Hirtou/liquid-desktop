@@ -1,5 +1,6 @@
 """Воздух: индекс качества и частицы по месту из виджета «Погода» (Open-Meteo, без ключа).
 Данные модельные, не с датчика у дома: обновляются раз в час, запрашиваем раз в 30 минут."""
+import applog
 from lang import tr
 import threading
 import time
@@ -61,6 +62,7 @@ class AirWidget(DesktopWidget):
             if data["european_aqi"] is None:
                 raise ValueError("нет данных")
         except Exception as ex:
+            applog.error("air.AirWidget._fetch", ex)
             data = {"error": type(ex).__name__}
         try:
             self.loaded.emit(data)

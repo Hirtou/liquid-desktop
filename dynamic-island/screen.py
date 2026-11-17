@@ -1,5 +1,6 @@
 """Экран через WinAPI: снимок куска экрана под островом (для стекла), «не попадать в снимки», клавиша скриншота,
 что впереди (игра на весь экран). Всё, что трогает снимок, работает и в фоновом потоке."""
+import applog
 import ctypes
 import threading
 from ctypes import wintypes as wt
@@ -208,8 +209,8 @@ def watch_screenshot_keys(callback):
     def run(done):
         try:
             callback()
-        except Exception:
-            pass
+        except Exception as _err:
+            applog.error("screen.watch_screenshot_keys.run", _err)
         finally:
             done.set()
     relay.fired.connect(run)  # из потока перехвата — в главный (сигнал сам встаёт в очередь)
@@ -222,8 +223,8 @@ def watch_screenshot_keys(callback):
                     done = threading.Event()
                     relay.fired.emit(done)
                     done.wait(0.3)  # окна должны успеть показаться снимку до того, как Windows снимет экран
-                except Exception:
-                    pass
+                except Exception as _err:
+                    applog.error("screen.watch_screenshot_keys.proc", _err)
         return user32.CallNextHookEx(None, code, wparam, lparam)
 
     def loop():
@@ -321,8 +322,8 @@ def watch_windows(callback):
         places[hwnd] = rect
         try:
             callback(hwnd, rect, event == EVENT_SYSTEM_FOREGROUND)
-        except Exception:
-            pass
+        except Exception as _err:
+            applog.error("screen.watch_windows.proc", _err)
 
     watch_windows.proc = _WINEVENTPROC(proc)  # держим ссылку, иначе сборщик мусора убьёт callback
     flags = WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS

@@ -1,4 +1,5 @@
 """Календарь на месяц: сегодня — синим кружком, выходные — красноватые."""
+import skins
 from lang import tr
 import calendar
 from datetime import date, timedelta
@@ -12,7 +13,7 @@ MONTHS = [tr("Январь"), tr("Февраль"), tr("Март"), tr("Апре
           tr("Июль"), tr("Август"), tr("Сентябрь"), tr("Октябрь"), tr("Ноябрь"), tr("Декабрь")]
 DAYS = [tr("пн"), tr("вт"), tr("ср"), tr("чт"), tr("пт"), tr("сб"), tr("вс")]
 FULL_DAYS = [tr("Понедельник"), tr("Вторник"), tr("Среда"), tr("Четверг"), tr("Пятница"), tr("Суббота"), tr("Воскресенье")]
-BLUE = QColor("#2f6bff")
+BLUE = skins.ACCENT
 RED = QColor("#ff5a5f")
 
 

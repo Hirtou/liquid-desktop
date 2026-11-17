@@ -1,5 +1,6 @@
 """Таймер с кольцом: старт/пауза, +1 минута, сброс; колесо мыши — минуты; по окончании — звук и мигание.
 Идёт и после перезапуска программы (время окончания хранится в настройках)."""
+import skins
 from lang import tr
 import math
 import time
@@ -12,7 +13,7 @@ from PySide6.QtWidgets import QInputDialog, QMessageBox
 from core import DesktopWidget, SHADOW, config, grid
 from widgets import kit
 
-BLUE, CYAN, RED = QColor("#2f6bff"), QColor("#36c6ff"), QColor("#ff5a5f")
+BLUE, CYAN, RED = skins.ACCENT, skins.ACCENT2, QColor("#ff5a5f")
 PRESETS = (1, 3, 5, 10, 15, 25, 45, 60)
 
 

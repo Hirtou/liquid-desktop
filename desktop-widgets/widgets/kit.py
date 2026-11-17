@@ -1,10 +1,11 @@
 """Общее рисование новых виджетов — те же размеры и приёмы, что у старых («Вода», «Таймер», «Луна»):
 цвета текста, шрифты, плашка-чип, кольцо в плитке слева, круглые стеклянные кнопки со значками, полоска."""
+import skins
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QConicalGradient, QFont, QFontMetricsF, QPen
 
-ACCENT = QColor("#2f6bff")
-CYAN = QColor("#36c6ff")
+ACCENT = skins.ACCENT   # цвет темы оформления (общий объект — перекрашивается при смене темы)
+CYAN = skins.ACCENT2
 GREEN, AMBER, RED, GRAY = QColor("#4ade80"), QColor("#ffb547"), QColor("#ff5a5f"), QColor("#9aa0aa")
 
 

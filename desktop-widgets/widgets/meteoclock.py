@@ -1,4 +1,5 @@
 """Метеочасы в духе ColorOS: риски по краю, большие цифры, стрелки поверх, дата и погода."""
+import skins
 from lang import tr
 import math
 import threading
@@ -18,7 +19,7 @@ SMOOTH = 66
 
 MONTHS = [tr("янв."), tr("февр."), tr("мар."), tr("апр."), tr("мая"), tr("июн."), tr("июл."), tr("авг."), tr("сент."), tr("окт."), tr("нояб."), tr("дек.")]
 DAYS = [tr("пн"), tr("вт"), tr("ср"), tr("чт"), tr("пт"), tr("сб"), tr("вс")]
-BLUE = QColor("#2f6bff")
+BLUE = skins.ACCENT
 
 
 class MeteoClockWidget(DesktopWidget):
@@ -101,7 +102,7 @@ class MeteoClockWidget(DesktopWidget):
         # всё, кроме стрелок, меняется раз в минуту — рисуем в картинку один раз и кладём каждый кадр
         # ключ считается 15 раз в секунду — без strftime и сортировки: погода меняется только в on_weather
         key = (self.card().size(), bool(self.dark), (now.day, now.hour, now.minute), id(self.weather),
-               self.devicePixelRatioF())
+               self.devicePixelRatioF(), skins.version)  # тема — день недели и стрелки цветом акцента
         if key != self.face_key:
             self.face_key = key
             dpr = self.devicePixelRatioF()

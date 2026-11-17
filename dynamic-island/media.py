@@ -1,5 +1,6 @@
 """Музыка через медиа-панель Windows (как виджет «Плеер»): трек, обложка, позиция, команды.
 Копия из виджетов, чтобы остров жил сам по себе. Показываем то, что играет: Spotify, YouTube Music или любой другой плеер."""
+import applog
 import asyncio
 import ctypes
 import ctypes.wintypes as wt
@@ -12,6 +13,7 @@ from PySide6.QtGui import QColor, QFont, QImage, QPainterPath, QPen
 
 YT_MUSIC_URL = "https://music.youtube.com"
 YANDEX_URL = "https://music.yandex.ru"
+SOUNDCLOUD_URL = "https://soundcloud.com"
 YT_MUSIC_APP = "cinhimbnkkaeohfgghhklpknlkffjgod"  # приложение YouTube Music, установленное из Chrome/Edge
 BROWSERS = ("chrome", "msedge", "firefox", "opera", "brave", "vivaldi", "browser")
 PLAYING = 4  # статус медиа-панели: 4 — играет, 5 — пауза
@@ -36,6 +38,7 @@ def window_titled(text):
 
 _YT_SEEN = set()  # браузеры, в которых сейчас играет YouTube Music
 _YA_SEEN = set()  # браузеры, в которых сейчас играет Яндекс Музыка
+_SC_SEEN = set()  # браузеры, в которых сейчас играет SoundCloud
 
 
 def is_yandex_app(low):
@@ -45,7 +48,7 @@ def is_yandex_app(low):
 
 
 def source_of(app_id):
-    """Откуда музыка: 'spotify', 'ytmusic', 'yandex' или 'other' (любой другой плеер или обычное видео в браузере)."""
+    """Откуда музыка: 'spotify', 'ytmusic', 'yandex', 'soundcloud' или 'other' (любой другой плеер или видео в браузере)."""
     low = app_id.lower()
     if "spotify" in low:
         return "spotify"
@@ -53,22 +56,33 @@ def source_of(app_id):
         return "yandex"
     if "youtube" in low or YT_MUSIC_APP in low:  # отдельные приложения YouTube Music
         return "ytmusic"
+    if "soundcloud" in low:  # приложение SoundCloud (из Store или установленное из браузера)
+        return "soundcloud"
     if any(b in low for b in BROWSERS):
         # вкладку видно по заголовку окна, только пока она активна; ушли на другую вкладку — помним, чья это
         # музыка, пока в браузере не откроют обычный YouTube (тогда играть может уже он)
+        seen = (_YT_SEEN, _YA_SEEN, _SC_SEEN)
         if window_titled("youtube music"):
-            _YT_SEEN.add(app_id)
-            _YA_SEEN.discard(app_id)
+            mine = _YT_SEEN
         elif window_titled("яндекс музыка") or window_titled("yandex music"):
-            _YA_SEEN.add(app_id)
-            _YT_SEEN.discard(app_id)
-        elif (app_id in _YT_SEEN or app_id in _YA_SEEN) and window_titled("- youtube -"):
-            _YT_SEEN.discard(app_id)
-            _YA_SEEN.discard(app_id)
+            mine = _YA_SEEN
+        elif window_titled("soundcloud"):  # вкладка SoundCloud: «Трек by Исполнитель | … on SoundCloud»
+            mine = _SC_SEEN
+        elif any(app_id in s for s in seen) and window_titled("- youtube -"):
+            mine = None  # открыли обычный YouTube — играть может уже он
+        else:
+            mine = False  # ничего не видно (ушли на другую вкладку) — помним прежнее
+        if mine is not False:
+            for s in seen:
+                s.discard(app_id)
+            if mine is not None:
+                mine.add(app_id)
         if app_id in _YT_SEEN:
             return "ytmusic"
         if app_id in _YA_SEEN:
             return "yandex"
+        if app_id in _SC_SEEN:
+            return "soundcloud"
     return "other"
 
 
@@ -79,7 +93,7 @@ def choose(status, chosen, current):
     if chosen in playing:
         return chosen
     if playing:
-        rank = {"spotify": 0, "ytmusic": 1, "yandex": 1, "other": 2}
+        rank = {"spotify": 0, "ytmusic": 1, "yandex": 1, "soundcloud": 1, "other": 2}
         return min(playing, key=lambda a: (rank[source_of(a)], a != current))
     if chosen in status:
         return chosen
@@ -92,6 +106,8 @@ def player_uri(source, app=""):
     идёт из него и оно умеет открываться по ссылке, иначе сайт)."""
     if source == "ytmusic":
         return YT_MUSIC_URL
+    if source == "soundcloud":
+        return SOUNDCLOUD_URL
     if source == "yandex":
         if is_yandex_app(app.lower()):
             try:
@@ -124,12 +140,13 @@ class Media(QObject):
     def __init__(self):
         super().__init__()
         self.loop = asyncio.new_event_loop()
+        self.loop.set_exception_handler(applog.asyncio_handler)
         self.cover_key, self.cover, self.cover_tries = None, None, 0
         self.chosen = None  # id приложения, которое показываем
         self.source_key, self.source = None, "other"
         self.reported, self.forced = {}, {}  # forced: имя -> (что включили, что Windows показывала тогда)
         threading.Thread(target=self.loop.run_forever, daemon=True).start()
-        asyncio.run_coroutine_threadsafe(self._poll(), self.loop)
+        applog.watch(asyncio.run_coroutine_threadsafe(self._poll(), self.loop), "media: опрос музыки")
 
     async def _session(self):
         from winrt.windows.media.control import GlobalSystemMediaTransportControlsSessionManager as Manager
@@ -148,6 +165,7 @@ class Media(QObject):
             try:
                 state = await self._read()
             except Exception as ex:
+                applog.error("media.Media._poll", ex)
                 state = {"error": type(ex).__name__}
             try:
                 self.changed.emit(state)
@@ -177,11 +195,12 @@ class Media(QObject):
             self.cover_tries += 1
             try:
                 self.cover = await self._cover(props.thumbnail)
-            except Exception:
+            except Exception as _err:
+                applog.error("media.Media._read", _err)
                 self.cover = None
         app = s.source_app_user_model_id.split("!")[-1].replace(".exe", "")
         # вкладку могли переключить: песня остаётся той же
-        if key != self.source_key or self.source not in ("ytmusic", "yandex"):
+        if key != self.source_key or self.source not in ("ytmusic", "yandex", "soundcloud"):
             self.source_key, self.source = key, source_of(s.source_app_user_model_id)
         c = pb.controls
         # Spotify выполняет 🔀 и 🔁, но не сообщает о них — держим то, что включили из виджета,
@@ -229,7 +248,7 @@ class Media(QObject):
             else:
                 await {"play": s.try_toggle_play_pause_async, "next": s.try_skip_next_async,
                        "prev": s.try_skip_previous_async}[name]()
-        asyncio.run_coroutine_threadsafe(run(), self.loop)
+        applog.watch(asyncio.run_coroutine_threadsafe(run(), self.loop), f"media: кнопка {name}")
 
 
 def mmss(sec):

@@ -5,6 +5,7 @@
 Всё, что зависит только от размера карточки, считается один раз (кэш).
 Работает в фоновом потоке: здесь нет ничего, что трогает окна Qt.
 """
+import applog
 from lang import tr
 import ctypes
 import os
@@ -18,6 +19,7 @@ import numpy as np
 import psutil
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QColor, QImage
+import skins
 
 PAD = 40          # запас вокруг карточки для размытия и преломления
 BLUR_SCALE = 4    # размываем в уменьшенной копии — быстро и мягко
@@ -211,8 +213,8 @@ def watch_screenshot_keys(callback):
     def run(done):
         try:
             callback()
-        except Exception:
-            pass
+        except Exception as _err:
+            applog.error("glass.watch_screenshot_keys.run", _err)
         finally:
             done.set()
     relay.fired.connect(run)  # из потока перехвата — в главный (сигнал сам встаёт в очередь)
@@ -225,8 +227,8 @@ def watch_screenshot_keys(callback):
                     done = threading.Event()
                     relay.fired.emit(done)
                     done.wait(0.3)  # окна должны успеть показаться снимку до того, как Windows снимет экран
-                except Exception:
-                    pass
+                except Exception as _err:
+                    applog.error("glass.watch_screenshot_keys.proc", _err)
         return user32.CallNextHookEx(None, code, wparam, lparam)
 
     def loop():
@@ -651,12 +653,54 @@ def theme_for(lum, prev=None):
     return lum < (TO_LIGHT + TO_DARK) / 2
 
 
+# Стекло на Rust (rust_glass -> liquid_glass.*.pyd рядом с программой): те же формулы, в ~3 раза быстрее
+# и без GIL. Нет файла, не загрузился или упал — считаем как раньше, на numpy (и пишем в журнал почему).
+# LIQUID_NO_RUST=1 — всегда numpy (сравнить).
+try:
+    if os.environ.get("LIQUID_NO_RUST"):
+        raise ImportError("LIQUID_NO_RUST")
+    import liquid_glass as _rust
+except Exception as _rust_err:  # noqa: F841 — причина пишется в журнал при первом стекле
+    _rust = None
+    _rust_why = f"{type(_rust_err).__name__}: {_rust_err}"
+else:
+    _rust_why = None
+_rust_told = False
+
+
+def _render_rust(src, w, h, radius, theme, fill, blur_r, haze, prev):
+    band, taps, light, alpha, Wb, Hb = _geometry(w, h, radius)
+    Ws, Hs = Wb // BLUR_SCALE, Hb // BLUR_SCALE
+    small = src if src.shape[:2] == (Hs, Ws) else _resize(src, Ws, Hs)
+    blurred, lum = _rust.blur_lum(small, BLUR if blur_r is None else max(0, min(10, int(blur_r))))
+    dark = theme_for(lum, prev) if theme == "auto" else theme == "dark"
+    toned = _rust.tone(blurred, dark, float(haze_amount(haze, dark)), float(juice(haze)))
+    big = _resize(toned, Wb, Hb)
+    m, add = skins.tint_params(w, h)
+    rgba = _rust.finish(big, w, h, PAD, band, taps[0], taps[1], taps[2], light[dark], alpha.ravel(),
+                        None if fill is None else float(fill), m, None if add is None else add.ravel())
+    return to_image(rgba), dark
+
+
 def render(src, w, h, radius, theme="auto", fill=None, blur_r=None, haze=None, prev=None):
     """Картинка стекла размером с карточку + признак тёмной темы. fill (%) — плотность, как у изморози;
     не задана — стекло сплошное. blur_r — сила размытия (0..10, по умолчанию BLUR), haze — замутнение (0..100).
 
     Цвет считаем в маленькой (размытой) копии — она в 16 раз меньше; увеличиваем силами Qt;
-    преломление — только в полосе у края."""
+    преломление — только в полосе у края. Считает Rust-модуль, без него — numpy ниже."""
+    global _rust, _rust_told
+    if not _rust_told:
+        _rust_told = True
+        if _rust is not None:
+            applog.line(f"стекло: Rust-модуль liquid_glass {_rust.VERSION}")
+        else:
+            applog.warn(f"стекло: Rust-модуль не загрузился ({_rust_why}) — считаю на numpy")
+    if _rust is not None:
+        try:
+            return _render_rust(src, w, h, radius, theme, fill, blur_r, haze, prev)
+        except Exception as ex:
+            applog.error("стекло на Rust сломалось — дальше numpy", ex, once=False)
+            _rust = None
     band, taps, light, alpha, Wb, Hb = _geometry(w, h, radius)
     Ws, Hs = Wb // BLUR_SCALE, Hb // BLUR_SCALE
     # из capture_many снимок приходит уже уменьшенным (small_size); из обоев и превью — полным
@@ -688,6 +732,7 @@ def render(src, w, h, radius, theme="auto", fill=None, blur_r=None, haze=None, p
     for ch, idx in enumerate(taps):
         rgb[band, ch] = bigf[idx, ch]
     rgb += lit[:, None]
+    skins.tint_rgb(rgb, w, h)  # оттенок темы оформления (у Liquid — нет)
     rgba = np.empty((h, w, 4), np.uint8)
     rgba[..., :3] = np.clip(rgb, 0, 255).reshape(h, w, 3)
     rgba[..., 3] = alpha if fill is None else (alpha.astype(np.float32) * fill / 100).astype(np.uint8)
@@ -701,6 +746,7 @@ def render_flat(w, h, radius, dark, fill=None):
     rgb = np.empty((h * w, 3), np.int16)
     rgb[:] = (58, 58, 64) if dark else (232, 232, 236)
     rgb += light[dark][:, None]
+    skins.tint_rgb(rgb, w, h)
     rgba = np.empty((h, w, 4), np.uint8)
     rgba[..., :3] = np.clip(rgb, 0, 255).reshape(h, w, 3)
     # заливка (настройка, %): 100 — сплошная матовая плитка; не задана — своя для темы

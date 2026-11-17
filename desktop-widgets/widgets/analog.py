@@ -1,4 +1,5 @@
 """Стрелочные часы: круглый циферблат на стекле, плавная синяя секундная стрелка."""
+import skins
 from lang import tr
 import math
 from datetime import datetime
@@ -9,7 +10,7 @@ from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPixmap
 from core import DesktopWidget, activity, grid, open_uri
 from widgets import tz
 
-BLUE = QColor("#2f6bff")
+BLUE = skins.ACCENT
 
 
 class AnalogClockWidget(DesktopWidget):
@@ -51,7 +52,7 @@ class AnalogClockWidget(DesktopWidget):
         dark = bool(self.dark)
         fg = QColor("#ededf0") if dark else QColor("#151517")
         # циферблат не меняется — рисуем его в картинку один раз, каждый кадр только стрелки
-        key = (self.card().size(), dark, self.devicePixelRatioF(), self.shape())
+        key = (self.card().size(), dark, self.devicePixelRatioF(), self.shape(), skins.version)  # тема — цвет акцента
         if key != self.face_key:
             self.face_key = key
             dpr = self.devicePixelRatioF()

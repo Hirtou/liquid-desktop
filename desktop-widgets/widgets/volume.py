@@ -1,4 +1,5 @@
 """Громкость: общий звук Windows — ползунок (тянуть или крутить колесо), кнопка «без звука», устройство."""
+import applog
 from lang import tr
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
@@ -23,13 +24,15 @@ class Audio:
             name = dev.FriendlyName or ""
             # «Динамики (fifine Headset)» -> «fifine Headset»
             self.name = name[name.find("(") + 1:name.rfind(")")] if "(" in name and name.endswith(")") else name
-        except Exception:
+        except Exception as _err:
+            applog.error("volume.Audio.refresh", _err)
             self.endpoint = None
 
     def read(self):
         try:
             return self.endpoint.GetMasterVolumeLevelScalar(), bool(self.endpoint.GetMute())
-        except Exception:
+        except Exception as _err:
+            applog.error("volume.Audio.read", _err)
             return None
 
     def set(self, v):
@@ -37,14 +40,14 @@ class Audio:
             self.endpoint.SetMasterVolumeLevelScalar(max(0.0, min(1.0, v)), None)
             if v > 0 and self.endpoint.GetMute():
                 self.endpoint.SetMute(0, None)
-        except Exception:
-            pass
+        except Exception as _err:
+            applog.error("volume.Audio.set", _err)
 
     def toggle_mute(self):
         try:
             self.endpoint.SetMute(0 if self.endpoint.GetMute() else 1, None)
-        except Exception:
-            pass
+        except Exception as _err:
+            applog.error("volume.Audio.toggle_mute", _err)
 
 
 class VolumeWidget(DesktopWidget):

@@ -8,11 +8,9 @@ import os
 for _var in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):  # numpy без лишнего пула потоков
     os.environ.setdefault(_var, "1")
 
-import faulthandler  # noqa: E402
 import sys  # noqa: E402
-import threading  # noqa: E402
+import subprocess  # noqa: E402
 import time  # noqa: E402
-import traceback  # noqa: E402
 import winreg  # noqa: E402
 
 from PySide6.QtCore import QPointF, QRectF, Qt  # noqa: E402
@@ -28,17 +26,10 @@ STOPPED = os.path.join(ROOT, "stopped")  # остров закрыли чере�
 
 
 def setup_log():
-    log = open(os.path.join(ROOT, "island.log"), "a", encoding="utf-8", buffering=1)
-    log.write(f"\n=== запуск {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n")
-    faulthandler.enable(log)
-
-    def hook(kind, value, tb):
-        log.write("".join(traceback.format_exception(kind, value, tb)))
-    sys.excepthook = hook
-    threading.excepthook = lambda a: hook(a.exc_type, a.exc_value, a.exc_traceback)
-    if sys.stderr is None:
-        sys.stderr = log
-    return log
+    """Всё, что пошло не так, — в island.log: см. applog.py."""
+    import applog
+    from lang import LANG
+    return applog.setup(os.path.join(ROOT, "island.log"), "Остров", f"язык {LANG}")
 
 
 def make_icon():
@@ -78,6 +69,12 @@ def set_autostart(on):
                 winreg.DeleteValue(k, RUN_NAME)
             except OSError:
                 pass
+    # подстраховка — задача Планировщика «при входе» (Windows иногда пропускает запись Run): включить/выключить вместе
+    try:
+        subprocess.run(["schtasks", "/Change", "/TN", RUN_NAME, "/ENABLE" if on else "/DISABLE"],
+                       capture_output=True, timeout=10, creationflags=subprocess.CREATE_NO_WINDOW)
+    except (OSError, subprocess.SubprocessError):
+        pass
 
 
 def main():
@@ -103,6 +100,8 @@ def main():
         return
 
     setup_log()  # после проверки: команды вроде --cmd snap — не запуск острова, в лог их не пишем
+    import applog
+    applog.log_screens(app)
     sys.path.insert(0, ROOT)
     from bridge import settings
     from island import Island

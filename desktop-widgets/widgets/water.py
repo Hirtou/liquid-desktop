@@ -1,4 +1,5 @@
 """Вода за день: кольцо прогресса, «+ стакан» / «−», график за неделю. Каждый день — с нуля."""
+import skins
 from lang import tr
 from datetime import date, timedelta
 
@@ -8,7 +9,7 @@ from PySide6.QtGui import QColor, QConicalGradient, QFont, QFontMetricsF, QPaint
 from core import DesktopWidget, config, grid
 from widgets import kit
 
-BLUE, CYAN = QColor("#2f8bff"), QColor("#36d1ff")
+BLUE, CYAN = skins.ACCENT, skins.ACCENT2
 GLASS_ML = 250
 DAYS = [tr("пн"), tr("вт"), tr("ср"), tr("чт"), tr("пт"), tr("сб"), tr("вс")]
 

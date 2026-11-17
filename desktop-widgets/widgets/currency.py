@@ -1,4 +1,5 @@
 """Курсы валют (open.er-api.com, без ключа): сколько стоит 1 доллар, евро… в твоей валюте; стрелка — к вчера."""
+import applog
 from lang import tr
 import threading
 from datetime import date
@@ -55,6 +56,7 @@ class CurrencyWidget(DesktopWidget):
             if data.get("result") != "success":
                 raise ValueError(data.get("error-type"))
         except Exception as ex:
+            applog.error("currency.CurrencyWidget._fetch", ex)
             data = {"error": tr("нет связи ({})").format(type(ex).__name__)}
         try:
             self.loaded.emit((base, data))

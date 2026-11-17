@@ -1,10 +1,11 @@
-"""Плеер Spotify, YouTube Music и Яндекс Музыки: обложка, трек, исполнитель, прогресс, кнопки ⏮ ⏯ ⏭, у Spotify — сердечко «в любимые».
+"""Плеер Spotify, YouTube Music, Яндекс Музыки и SoundCloud: обложка, трек, исполнитель, прогресс, кнопки ⏮ ⏯ ⏭, у Spotify — сердечко «в любимые».
 
 Через медиа-панель Windows (её используют кнопки громкости и экран блокировки): плеер сам отдаёт туда трек,
 обложку и позицию и принимает команды. Ни входа в аккаунт, ни ключей. Показываем то, что сейчас играет (см. choose);
 подходит и любой другой плеер, который пишет в медиа-панель. Сердечко — через Spotify Web API (spotify_api.py):
 один раз войти в Spotify в браузере. У YouTube Music открытого API для лайков нет, сердечка у него нет.
 """
+import applog
 from lang import tr
 import asyncio
 import ctypes
@@ -23,8 +24,10 @@ from core import DesktopWidget, RADIUS, SHADOW, activity, config, grid, open_uri
 GREEN = QColor("#1ed760")
 YT_RED = QColor("#ff0033")
 YA_YELLOW = QColor("#ffdb4d")
+SC_ORANGE = QColor("#ff5500")
 YT_MUSIC_URL = "https://music.youtube.com"
 YANDEX_URL = "https://music.yandex.ru"
+SOUNDCLOUD_URL = "https://soundcloud.com"
 YT_MUSIC_APP = "cinhimbnkkaeohfgghhklpknlkffjgod"  # приложение YouTube Music, установленное из Chrome/Edge
 BROWSERS = ("chrome", "msedge", "firefox", "opera", "brave", "vivaldi", "browser")
 PLAYING = 4  # статус медиа-панели: 4 — играет, 5 — пауза
@@ -49,6 +52,7 @@ def window_titled(text):
 
 _YT_SEEN = set()  # браузеры, в которых сейчас играет YouTube Music
 _YA_SEEN = set()  # браузеры, в которых сейчас играет Яндекс Музыка
+_SC_SEEN = set()  # браузеры, в которых сейчас играет SoundCloud
 
 
 def is_yandex_app(low):
@@ -58,7 +62,7 @@ def is_yandex_app(low):
 
 
 def source_of(app_id):
-    """Откуда музыка: 'spotify', 'ytmusic', 'yandex' или 'other' (любой другой плеер или обычное видео в браузере)."""
+    """Откуда музыка: 'spotify', 'ytmusic', 'yandex', 'soundcloud' или 'other' (любой другой плеер или видео в браузере)."""
     low = app_id.lower()
     if "spotify" in low:
         return "spotify"
@@ -66,22 +70,33 @@ def source_of(app_id):
         return "yandex"
     if "youtube" in low or YT_MUSIC_APP in low:  # отдельные приложения YouTube Music
         return "ytmusic"
+    if "soundcloud" in low:  # приложение SoundCloud (из Store или установленное из браузера)
+        return "soundcloud"
     if any(b in low for b in BROWSERS):
         # вкладку видно по заголовку окна, только пока она активна; ушли на другую вкладку — помним, чья это
         # музыка, пока в браузере не откроют обычный YouTube (тогда играть может уже он)
+        seen = (_YT_SEEN, _YA_SEEN, _SC_SEEN)
         if window_titled("youtube music"):
-            _YT_SEEN.add(app_id)
-            _YA_SEEN.discard(app_id)
+            mine = _YT_SEEN
         elif window_titled("яндекс музыка") or window_titled("yandex music"):
-            _YA_SEEN.add(app_id)
-            _YT_SEEN.discard(app_id)
-        elif (app_id in _YT_SEEN or app_id in _YA_SEEN) and window_titled("- youtube -"):
-            _YT_SEEN.discard(app_id)
-            _YA_SEEN.discard(app_id)
+            mine = _YA_SEEN
+        elif window_titled("soundcloud"):  # вкладка SoundCloud: «Трек by Исполнитель | … on SoundCloud»
+            mine = _SC_SEEN
+        elif any(app_id in s for s in seen) and window_titled("- youtube -"):
+            mine = None  # открыли обычный YouTube — играть может уже он
+        else:
+            mine = False  # ничего не видно (ушли на другую вкладку) — помним прежнее
+        if mine is not False:
+            for s in seen:
+                s.discard(app_id)
+            if mine is not None:
+                mine.add(app_id)
         if app_id in _YT_SEEN:
             return "ytmusic"
         if app_id in _YA_SEEN:
             return "yandex"
+        if app_id in _SC_SEEN:
+            return "soundcloud"
     return "other"
 
 
@@ -92,7 +107,7 @@ def choose(status, chosen, current):
     if chosen in playing:
         return chosen
     if playing:
-        rank = {"spotify": 0, "ytmusic": 1, "yandex": 1, "other": 2}
+        rank = {"spotify": 0, "ytmusic": 1, "yandex": 1, "soundcloud": 1, "other": 2}
         return min(playing, key=lambda a: (rank[source_of(a)], a != current))
     if chosen in status:
         return chosen
@@ -110,6 +125,8 @@ def player_uri(source, app=""):
     идёт из него и оно умеет открываться по ссылке, иначе сайт)."""
     if source == "ytmusic":
         return YT_MUSIC_URL
+    if source == "soundcloud":
+        return SOUNDCLOUD_URL
     if source == "yandex":
         if is_yandex_app(app.lower()):
             try:
@@ -142,12 +159,13 @@ class Media(QObject):
     def __init__(self):
         super().__init__()
         self.loop = asyncio.new_event_loop()
+        self.loop.set_exception_handler(applog.asyncio_handler)
         self.cover_key, self.cover, self.cover_tries = None, None, 0
         self.chosen = None  # id приложения, которое показываем
         self.source_key, self.source = None, "other"
         self.reported, self.forced = {}, {}  # forced: имя -> (что включили, что Windows показывала тогда)
         threading.Thread(target=self.loop.run_forever, daemon=True).start()
-        asyncio.run_coroutine_threadsafe(self._poll(), self.loop)
+        applog.watch(asyncio.run_coroutine_threadsafe(self._poll(), self.loop), "player: опрос музыки")
 
     async def _session(self):
         from winrt.windows.media.control import GlobalSystemMediaTransportControlsSessionManager as Manager
@@ -166,6 +184,7 @@ class Media(QObject):
             try:
                 state = await self._read()
             except Exception as ex:
+                applog.error("player.Media._poll", ex)
                 state = {"error": type(ex).__name__}
             try:
                 self.changed.emit(state)
@@ -196,11 +215,12 @@ class Media(QObject):
             self.cover_tries += 1
             try:
                 self.cover = await self._cover(props.thumbnail)
-            except Exception:
+            except Exception as _err:
+                applog.error("player.Media._read", _err)
                 self.cover = None
         app = s.source_app_user_model_id.split("!")[-1].replace(".exe", "")
         # вкладку могли переключить: песня остаётся той же
-        if key != self.source_key or self.source not in ("ytmusic", "yandex"):
+        if key != self.source_key or self.source not in ("ytmusic", "yandex", "soundcloud"):
             self.source_key, self.source = key, source_of(s.source_app_user_model_id)
         c = pb.controls
         # Spotify выполняет 🔀 и 🔁, но не сообщает о них — держим то, что включили из виджета,
@@ -248,7 +268,7 @@ class Media(QObject):
             else:
                 await {"play": s.try_toggle_play_pause_async, "next": s.try_skip_next_async,
                        "prev": s.try_skip_previous_async}[name]()
-        asyncio.run_coroutine_threadsafe(run(), self.loop)
+        applog.watch(asyncio.run_coroutine_threadsafe(run(), self.loop), f"player: кнопка {name}")
 
 
 def mmss(sec):
@@ -271,7 +291,7 @@ def accent(img):
 class PlayerWidget(DesktopWidget):
     key = "player"
     title = tr("Плеер")
-    description = tr("Spotify, YouTube Music, Яндекс Музыка: обложка, трек, кнопки")
+    description = tr("Spotify, YouTube Music, Яндекс Музыка, SoundCloud: обложка, трек, кнопки")
     liked_ready = Signal(object, object, object)  # (песня, id трека, в любимых?) — из фонового потока
     login_done = Signal(object)                   # None — вошли, иначе текст ошибки
     save_cfg = Signal()                           # записать настройки — в главном потоке
@@ -333,6 +353,8 @@ class PlayerWidget(DesktopWidget):
                     open_uri(YT_MUSIC_URL)
                 elif name == "open_ya":
                     open_uri(player_uri("yandex", "yandex.music"))
+                elif name == "open_sc":
+                    open_uri(SOUNDCLOUD_URL)
                 elif name == "like":
                     self.toggle_like()
                 elif name == "seek":  # клик по полоске — перемотка туда
@@ -378,8 +400,8 @@ class PlayerWidget(DesktopWidget):
                 title = (key[0] or "").casefold()
                 if cur and (cur[1].casefold() == title or cur[1].casefold().startswith(title[:12])):
                     self.liked_ready.emit(key, cur[0], api.liked(cur[0]))
-            except Exception:
-                pass
+            except Exception as _err:
+                applog.error("player.check_like.work", _err)
         threading.Thread(target=work, daemon=True).start()
 
     def on_liked(self, key, track_id, liked):
@@ -406,7 +428,8 @@ class PlayerWidget(DesktopWidget):
         def work():
             try:
                 api.set_liked(track_id, on)
-            except Exception:
+            except Exception as _err:
+                applog.error("player.toggle_like.work", _err)
                 self.liked_ready.emit(key, track_id, not on)  # не вышло — вернуть как было
         threading.Thread(target=work, daemon=True).start()
 
@@ -433,6 +456,7 @@ class PlayerWidget(DesktopWidget):
                 api.login()
                 self.login_done.emit(None)
             except Exception as e:
+                applog.error("player.start_login.work", e)
                 self.login_done.emit(str(e))
         threading.Thread(target=work, daemon=True).start()
 
@@ -477,23 +501,30 @@ class PlayerWidget(DesktopWidget):
             f.setPixelSize(15)
             p.setFont(f)
             p.setPen(fg)
-            p.drawText(r.adjusted(0, 0, 0, -40), Qt.AlignCenter, tr("Сейчас ничего не играет"))
+            p.drawText(r.adjusted(0, 18, 0, 0), Qt.AlignHCenter | Qt.AlignTop, tr("Сейчас ничего не играет"))
             f.setPixelSize(12)
             p.setFont(f)
-            fm, gap, x0 = QFontMetricsF(f), 6, 0.0
-            row = [("open", "Spotify", GREEN, QColor("#0b2615")), ("open_yt", "YouTube Music", YT_RED, QColor("white")),
-                   ("open_ya", tr("Яндекс Музыка"), YA_YELLOW, QColor("#1c1a00"))]
-            widths = [fm.horizontalAdvance(t) + 22 for _, t, _, _ in row]
-            left = r.center().x() - (sum(widths) + gap * (len(row) - 1)) / 2  # три кнопки в ряд, по центру
-            for (name, text, bg, ink), w0 in zip(row, widths):
-                btn = QRectF(left + x0, r.bottom() - 50, w0, 30)
-                x0 += w0 + gap
-                self.buttons[name] = btn
-                p.setPen(Qt.NoPen)
-                p.setBrush(bg)
-                p.drawRoundedRect(btn, 15, 15)
-                p.setPen(ink)
-                p.drawText(btn, Qt.AlignCenter, text)
+            fm, gap = QFontMetricsF(f), 6
+            items = [("open", "Spotify", GREEN, QColor("#0b2615")), ("open_yt", "YouTube Music", YT_RED, QColor("white")),
+                     ("open_ya", tr("Яндекс Музыка"), YA_YELLOW, QColor("#1c1a00")),
+                     ("open_sc", "SoundCloud", SC_ORANGE, QColor("white"))]
+            # четыре кнопки: влезают в ряд — в ряд, нет — два ряда по две, по центру
+            widths = [fm.horizontalAdvance(t) + 22 for _, t, _, _ in items]
+            rows = [items] if sum(widths) + gap * 3 <= r.width() - 28 else [items[:2], items[2:]]
+            y = r.bottom() - 16 - len(rows) * 30 - (len(rows) - 1) * 8
+            for row in rows:
+                ws = [fm.horizontalAdvance(t) + 22 for _, t, _, _ in row]
+                x = r.center().x() - (sum(ws) + gap * (len(row) - 1)) / 2
+                for (name, text, bg, ink), w0 in zip(row, ws):
+                    btn = QRectF(x, y, w0, 30)
+                    x += w0 + gap
+                    self.buttons[name] = btn
+                    p.setPen(Qt.NoPen)
+                    p.setBrush(bg)
+                    p.drawRoundedRect(btn, 15, 15)
+                    p.setPen(ink)
+                    p.drawText(btn, Qt.AlignCenter, text)
+                y += 38
             return
 
         # мягкая подсветка цветом обложки

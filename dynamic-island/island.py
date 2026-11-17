@@ -29,6 +29,7 @@ from PySide6.QtWidgets import QApplication, QMenu, QWidget
 import agents as ag
 import screen
 from bridge import SERVER as WIDGETS_SERVER
+import skins
 from bridge import (Audio, focus_cfg, focus_left, focus_length, focus_today, settings, timer_cfg, timer_left,
                     widgets)
 from media import Media, YT_MUSIC_URL, accent, glyph, player_uri, toggle_glyph
@@ -352,6 +353,14 @@ class Island(QWidget):
         else:
             own = settings.get("look", {})
             src = {k: own.get(k, v) for k, v in LOOK_DEFAULT.items()}
+        # тема оформления — всегда общая с виджетами (вкладка «Темы» в каталоге)
+        skin = widgets.section("app").get("skin", "liquid")
+        src["skin"] = skin if skin in skins.SKINS else "liquid"
+        s = skins.SKINS[src["skin"]]
+        if s["blur"] is not None:
+            src["blur"], src["haze"] = s["blur"], s["haze"]
+        if s["dark"]:
+            src["theme"] = "dark"
         return src
 
     def warm_up(self):
@@ -383,6 +392,10 @@ class Island(QWidget):
         if not force and look == self.look and dark == DARK:
             return
         acrylic_was = self.look.get("acrylic") if self.look else None
+        if look["skin"] != self.look.get("skin"):
+            skins.apply(look["skin"])
+            # синий острова: у Liquid — свой, как был; у остальных тем — акцент темы
+            BLUE.setRgb(*((0x4c, 0x8d, 0xff) if look["skin"] == "liquid" else skins.ACCENT.getRgb()[:3]))
         self.look = look
         set_palette(dark)
         self._chrome_key = None
@@ -861,7 +874,10 @@ class Island(QWidget):
     def repaint_area(self):
         """Перерисовать только место вокруг капсулы (со свечением) и где она была в прошлый раз:
         окно 520×200 целиком Windows перекладывает заметно дороже."""
-        area = self.shapes()[2].boundingRect().adjusted(-4, -4, 4, 4).toAlignedRect()
+        # у темы с ореолом («Неон») — запас на ореол со всех сторон: иначе пиксели свечения за краем области
+        # не стирались, и каждый кадр анимации оставлял след (полосы под островом)
+        g = 16 if skins.glow_colors() is not None else 4
+        area = self.shapes()[2].boundingRect().adjusted(-g, -g, g, g).toAlignedRect()
         last = getattr(self, "_painted", None)
         self._painted = area
         self.update(area.united(last) if last is not None else area)
@@ -1217,6 +1233,13 @@ class Island(QWidget):
             if self.look["acrylic"]:
                 tint.setAlpha(max(tint.alpha(), 236))
             p.fillPath(path, tint)
+        box = path.boundingRect()
+        skin_tint = skins.tint_brush(box)
+        if skin_tint is not None:
+            brush, k = skin_tint
+            p.setOpacity(k)
+            p.fillPath(path, brush)
+            p.setOpacity(1.0)
         # лёгкий блик сверху и цветной отсвет дела снизу — свет «копится» в толще стекла
         box = path.boundingRect()
         sheen = QLinearGradient(box.topLeft(), box.bottomLeft())
@@ -1231,12 +1254,19 @@ class Island(QWidget):
         p.fillPath(path, sheen)
         p.restore()
         # кромка: тонкий свет, ярче снизу, с оттенком дела
-        rim = QLinearGradient(box.topLeft(), box.bottomLeft())
-        ra = 0.55 if DARK else 1.0  # кромка — те же числа, что у карточки виджета
-        rim.setColorAt(0, QColor(255, 255, 255, int(150 * ra)))
-        rim.setColorAt(0.5, QColor(255, 255, 255, int(45 * ra)))
-        rim.setColorAt(1, QColor(255, 255, 255, int(130 * ra)))
-        p.setPen(QPen(rim, 1.0))
+        glow = skins.glow_colors()
+        if glow is not None:  # «Неон»: мягкий ореол вокруг капсул — размытая кромка (раньше кольца давали полосы)
+            gkey = (self._shape_key, skins.version)
+            if getattr(self, "_glow_key", None) != gkey:
+                self._glow_key = gkey
+                self._glow_img = skins.glow_image(path, WIN_W, WIN_H, 0, glow[0], glow[1], strength=0.5,
+                                                  spread=6, res=0.5)
+            p.save()
+            p.setRenderHint(QPainter.SmoothPixmapTransform)
+            p.drawImage(QRectF(0, 0, WIN_W, WIN_H), self._glow_img)
+            p.restore()
+        rim, width = skins.rim_pen(box, DARK)  # те же числа, что у карточки виджета
+        p.setPen(QPen(rim, width))
         p.setBrush(Qt.NoBrush)
         p.drawPath(path)
         p.end()
@@ -1319,15 +1349,26 @@ class Island(QWidget):
     def eq(self, p, x, cy, playing, height=12, bar=3.0):
         """Эквалайзер: 4 столбика пляшут, пока играет; на паузе — низкие."""
         t = time.monotonic()
-        color = self.kind_color("music")
+        color = QColor(self.kind_color("music"))
+        # цвет — от обложки, но заметный: на тёмном стекле не темнее и не серее порога (тёмная обложка давала
+        # тусклые серо-фиолетовые столбики), на светлом — не светлее
+        h_, s_, l_, _ = color.getHsl()
+        if DARK:
+            color.setHsl(h_, max(s_, 150), max(l_, 175))
+        else:
+            color.setHsl(h_, max(s_, 150), min(l_, 110))
+        height, bar = height + 2, bar + 0.5
         p.setPen(Qt.NoPen)
         for i, (sp, ph) in enumerate(((7.0, 0.0), (9.5, 1.3), (6.2, 2.1), (8.3, 0.7))):
-            hgt = 3 + (height - 3) * abs(math.sin(t * sp + ph)) ** 1.4 if playing else 3
+            hgt = 4 + (height - 4) * abs(math.sin(t * sp + ph)) ** 1.4 if playing else 4
+            r = QRectF(x + i * (bar + 2.5), cy - hgt / 2, bar, hgt)
+            p.setBrush(with_alpha(color, 0.28))  # лёгкое свечение вокруг столбика
+            p.drawRoundedRect(r.adjusted(-1.5, -1.5, 1.5, 1.5), bar / 2 + 1.5, bar / 2 + 1.5)
             grad = QLinearGradient(0, cy - hgt / 2, 0, cy + hgt / 2)
-            grad.setColorAt(0, color.lighter(140))
+            grad.setColorAt(0, color.lighter(125))
             grad.setColorAt(1, color)
             p.setBrush(grad)
-            p.drawRoundedRect(QRectF(x + i * (bar + 2.5), cy - hgt / 2, bar, hgt), bar / 2, bar / 2)
+            p.drawRoundedRect(r, bar / 2, bar / 2)
 
     def cover(self, p, rect, rad, img=None):
         clip = QPainterPath()

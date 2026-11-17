@@ -1,4 +1,5 @@
 """Скорость интернета: загрузка и отдача сейчас и график за последнюю минуту."""
+import skins
 from lang import tr
 from collections import deque
 
@@ -8,7 +9,7 @@ from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPainterPath
 
 from core import DesktopWidget, grid, open_uri
 
-DOWN = QColor("#2f8bff")
+DOWN = skins.ACCENT
 UP = QColor("#34c77b")
 SAMPLES = 60  # секунд на графике
 

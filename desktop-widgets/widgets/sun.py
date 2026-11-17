@@ -1,4 +1,5 @@
 """Солнце: восход и закат в городе из «Погоды», дуга с солнцем на ней сейчас, длина дня."""
+import applog
 from lang import tr
 import math
 import threading
@@ -29,6 +30,7 @@ def fetch_sun(place):
         data["name"] = name
         return data
     except Exception as ex:
+        applog.error("sun.fetch_sun", ex)
         return {"error": tr("нет связи ({})").format(type(ex).__name__)}
 
 
