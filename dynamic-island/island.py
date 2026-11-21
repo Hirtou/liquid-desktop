@@ -22,7 +22,7 @@ import winsound
 from concurrent.futures import ThreadPoolExecutor
 
 from PySide6.QtCore import QObject, QPointF, QProcess, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import (QColor, QFont, QFontMetricsF, QImage, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap,
+from PySide6.QtGui import (QColor, QCursor, QFont, QFontMetricsF, QImage, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap,
                            QRadialGradient)
 from PySide6.QtWidgets import QApplication, QMenu, QWidget
 
@@ -39,8 +39,10 @@ WIN_W, WIN_H = 520, 200  # окно с запасом под самую боль
 TOP = 8                  # отступ капсулы от верха экрана
 H = 36                   # высота капсулы
 GAP = 8                  # между капсулой и каплей второго дела
-LINE_W, LINE_H = 132, 6  # остров «линией» (настройка "line"): свёрнутый — тонкая полоска
-LINE_PAD_X, LINE_PAD_Y = 6, 6  # куда можно нажать, чтобы раскрыть линию: сама линия, чуть шире и до верха экрана
+LINE_W, LINE_H = 110, 5  # остров «линией» (настройка "line"): свёрнутый — тонкая полоска
+LINE_TOP = 2  # линия прижата к самому верху экрана: под ней вкладки браузера и их крестики — не перекрывать
+# нажать, чтобы раскрыть линию, можно только по ней самой и над ней (до края экрана: мышь туда «упирается»).
+# Раньше поле было шире линии и на 6 точек ниже — закрывало крестик вкладки в браузере
 SWIPE = 18               # смах вверх на столько точек — остров сворачивается в линию
 SNAP_SECONDS = 3.0       # после клавиши скриншота остров виден снимкам
 FG = QColor("#f4f4f7")          # текст; светлая тема меняет палитру (set_palette)
@@ -254,6 +256,12 @@ class Island(QWidget):
         self.hook = screen.watch_screenshot_keys(self.on_screenshot)
         self.poller = QTimer(self, interval=250, timeout=self.poll)
         self.poller.start()
+        # ореол свечения (темы «Неон», «Кастомная») — почти прозрачные пиксели вокруг капсулы, но Windows всё равно
+        # отдаёт клики по ним острову: клик рядом (по вкладке браузера) раскрывал остров. Пока мышь не над самой
+        # капсулой, окно пропускает мышь насквозь
+        self.pass_through = False
+        self.pass_timer = QTimer(self, interval=40, timeout=self.update_pass_through)
+        self.pass_timer.start()
         self.bg_timer = QTimer(self, interval=700, timeout=self.grab_bg)
         # окна открылись/закрылись под островом — стекло сразу, и ещё раз после анимации окна
         self.bg_again, self.bg_kicked = False, 0.0
@@ -290,13 +298,9 @@ class Island(QWidget):
     def open_settings(self):
         """Настройки острова — в общем окне виджетов, раздел «Остров».
         Виджеты не запущены — запустить их сразу на этом разделе."""
-        from PySide6.QtNetwork import QLocalSocket
-        sock = QLocalSocket()
-        sock.connectToServer(WIDGETS_SERVER)
-        if sock.waitForConnected(300):
-            sock.write(b"section island")
-            sock.waitForBytesWritten(300)
-            sock.disconnectFromServer()
+        import ipc
+        if ipc.alive(WIDGETS_SERVER):  # без ожидания в главном потоке (см. ipc.py)
+            ipc.send(WIDGETS_SERVER, b"section island")
             return
         main = os.path.join(widgets.dir, "main.py")
         if os.path.isfile(main):
@@ -356,9 +360,13 @@ class Island(QWidget):
         # тема оформления — всегда общая с виджетами (вкладка «Темы» в каталоге)
         skin = widgets.section("app").get("skin", "liquid")
         src["skin"] = skin if skin in skins.SKINS else "liquid"
+        # своя тема: её цвета тоже в конфиге виджетов — поменяли в редакторе, остров перекрасится
+        src["custom"] = skins.custom_spec(widgets.section("app").get("custom_skin"))
+        if src["skin"] != getattr(skins, "_current", None) or src["custom"] != getattr(skins, "_custom", None):
+            skins.apply(src["skin"], src["custom"])  # тёмная ли своя тема — известно только после apply
         s = skins.SKINS[src["skin"]]
-        if s["blur"] is not None:
-            src["blur"], src["haze"] = s["blur"], s["haze"]
+        # тема двигает стекло от настроек, а не заменяет их (как у виджетов: skins.glass_params)
+        src["blur"], src["haze"] = skins.glass_params(src["blur"], src["haze"])
         if s["dark"]:
             src["theme"] = "dark"
         return src
@@ -392,8 +400,8 @@ class Island(QWidget):
         if not force and look == self.look and dark == DARK:
             return
         acrylic_was = self.look.get("acrylic") if self.look else None
-        if look["skin"] != self.look.get("skin"):
-            skins.apply(look["skin"])
+        if look["skin"] != self.look.get("skin") or look["custom"] != self.look.get("custom"):
+            skins.apply(look["skin"], look["custom"])
             # синий острова: у Liquid — свой, как был; у остальных тем — акцент темы
             BLUE.setRgb(*((0x4c, 0x8d, 0xff) if look["skin"] == "liquid" else skins.ACCENT.getRgb()[:3]))
         self.look = look
@@ -874,9 +882,13 @@ class Island(QWidget):
     def repaint_area(self):
         """Перерисовать только место вокруг капсулы (со свечением) и где она была в прошлый раз:
         окно 520×200 целиком Windows перекладывает заметно дороже."""
-        # у темы с ореолом («Неон») — запас на ореол со всех сторон: иначе пиксели свечения за краем области
-        # не стирались, и каждый кадр анимации оставлял след (полосы под островом)
-        g = 16 if skins.glow_colors() is not None else 4
+        # у темы с ореолом («Неон») — окно целиком: частичная перерисовка оставляла от ореола полосы-следы
+        # над столом, когда капсула сжималась (особенно в линию, где ореола уже нет)
+        if skins.glow_colors() is not None:
+            self._painted = None
+            self.update()
+            return
+        g = 4
         area = self.shapes()[2].boundingRect().adjusted(-g, -g, g, g).toAlignedRect()
         last = getattr(self, "_painted", None)
         self._painted = area
@@ -965,7 +977,9 @@ class Island(QWidget):
         gap = GAP * b
         total = w + (gap + d if d else 0)
         left = (WIN_W - total) / 2
-        pill = QRectF(left, TOP, w, h)
+        # линия поднимается к краю экрана (тем выше, чем тоньше остров — переход в капсулу плавный)
+        lift = max(0.0, min(1.0, (H * 0.6 - h) / (H * 0.6 - LINE_H))) * (TOP - LINE_TOP)
+        pill = QRectF(left, TOP - lift, w, h)
         bub = QRectF(pill.right() + gap, TOP + (H - d) / 2, d, d) if d else QRectF()
         path = QPainterPath()
         radius = min(h / 2, 30)
@@ -1086,6 +1100,8 @@ class Island(QWidget):
             return
         if event.button() != Qt.LeftButton:
             return
+        if not self.over_island(pos):  # ореол вокруг — не остров
+            return
         kind = self.view[0] if self.view else None
         if self.bubble.x > 0.5 and self.bubble_rect.contains(pos):
             self.pinned = self.primary()[1]
@@ -1109,6 +1125,41 @@ class Island(QWidget):
         elif not self.expanded():
             self.hover = True
             self.retarget()
+
+    def over_island(self, pos):
+        """Мышь над самим островом (капсула, капля, кнопки, линия), а не над ореолом вокруг."""
+        pill, bub, path = self.shapes()
+        if self.view and self.view[0] == "line":
+            return QRectF(pill.left(), 0, pill.width(), pill.bottom() + 1).contains(pos)
+        return (path.contains(pos) or any(r.contains(pos) for r in self.buttons.values())
+                or self.bubble_rect.contains(pos))
+
+    def update_pass_through(self):
+        if not self.isVisible():
+            return
+        want = False
+        if (skins.glow_colors() is not None and self.drag is None and not QApplication.mouseButtons()
+                and QApplication.activePopupWidget() is None):
+            want = not self.over_island(QPointF(self.mapFromGlobal(QCursor.pos())))
+        if want == self.pass_through:
+            return
+        self.pass_through = want
+        hwnd = int(self.winId())
+        u32 = ctypes.windll.user32
+        ex = u32.GetWindowLongW(hwnd, -20)  # GWL_EXSTYLE
+        if want:
+            self._ex_layered = bool(ex & 0x80000)
+            ex |= 0x20 | 0x80000              # WS_EX_TRANSPARENT (+ LAYERED — без него мышь не проходит)
+        else:
+            ex &= ~0x20
+            if not getattr(self, "_ex_layered", True):
+                ex &= ~0x80000
+        u32.SetWindowLongW(hwnd, -20, ex)
+        self.update()  # Windows после смены стиля может показать старый кадр — перерисовать целиком
+        if want:
+            self.enter_timer.stop()
+            if self.hover and not self.leave_timer.isActive():
+                self.leave_timer.start()
 
     def mouseDoubleClickEvent(self, event):
         """Открыть приложение того, что на острове (плеер, помощник, погоду) — двойным кликом, чтобы случайный
@@ -1255,6 +1306,10 @@ class Island(QWidget):
         p.restore()
         # кромка: тонкий свет, ярче снизу, с оттенком дела
         glow = skins.glow_colors()
+        if self.view and self.view[0] == "line":
+            # у линии ореола нет: его почти прозрачные пиксели ловят мышь, и клик рядом с линией (по вкладке
+            # браузера) раскрывал остров
+            glow = None
         if glow is not None:  # «Неон»: мягкий ореол вокруг капсул — размытая кромка (раньше кольца давали полосы)
             gkey = (self._shape_key, skins.version)
             if getattr(self, "_glow_key", None) != gkey:
@@ -1293,7 +1348,7 @@ class Island(QWidget):
         if self.view and self.view[0] == "line" and pill.height() < H * 0.6:
             # линия: светлая полоска поверх стекла, чтобы её было видно на любом фоне; вокруг — почти
             # невидимое поле (иначе Windows пропускает мышь сквозь прозрачное и навести на линию нельзя)
-            catch = pill.adjusted(-LINE_PAD_X, -TOP, LINE_PAD_X, LINE_PAD_Y)
+            catch = QRectF(pill.left(), 0, pill.width(), pill.bottom() + 1)
             p.fillRect(catch, QColor(0, 0, 0, 2))
             k = 1 - max(0.0, min(1.0, (pill.height() - LINE_H) / (H * 0.6 - LINE_H)))
             p.setPen(Qt.NoPen)

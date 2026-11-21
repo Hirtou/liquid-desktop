@@ -1,8 +1,8 @@
 """Гифка на рабочем столе: своя анимация (GIF или анимированный WebP) в карточке любого размера по сетке.
-Редактор (двойной клик или правый клик → «Редактор гифки…»): размер в ячейках (1×1 … 4×3), скорость и рамка обрезки,
+Редактор (правый клик → «Редактор гифки…»): размер в ячейках (1×1 … 4×3), скорость и рамка обрезки,
 как в редакторе фото на телефоне: тянешь за углы — меняешь размер рамки, за середину — двигаешь; что в рамке, то и на
 виджете. Всё видно сразу. Файл только читается; закрытый окном виджет гифку не крутит."""
-from lang import tr
+from lang import LANG, tr
 import os
 import sys
 import time
@@ -13,11 +13,51 @@ from PySide6.QtWidgets import (QComboBox, QDialog, QFileDialog, QGridLayout, QHB
                                QSlider, QVBoxLayout, QWidget)
 
 import icons
+import skins
 from core import DesktopWidget, RADIUS, SHADOW, activity, config, grid
 
 EXTS = (".gif", ".webp")
 SIZES = [(1, 1), (2, 1), (1, 2), (2, 2), (3, 1), (3, 2), (4, 1), (4, 2), (2, 3), (3, 3), (4, 3)]  # ширина × высота, ячеек
 MIN_PART = 0.12  # рамка обрезки не меньше 12% ширины кадра — иначе за углы уже не ухватить
+MAX_FILES = 30
+EVERY = [(10, tr("10 секунд")), (30, tr("30 секунд")), (60, tr("1 минута")), (300, tr("5 минут")),
+         (1800, tr("30 минут"))]
+FLIP = [("click", tr("Кликом")), ("swipe", tr("Свайпом влево-вправо"))]
+SLIDE = 0.22  # свайп: гифка уезжает за край и въезжает следующая, с
+
+
+def draw_add(p, r, dark, title, hint):
+    """Пустой виджет (фото / гифка ещё не выбраны): по центру — круглый «+» цвета акцента и «Добавить …»,
+    ниже серым — подсказка. Нажатие по виджету открывает выбор файлов."""
+    small = min(r.width(), r.height()) < 200
+    rad = 20 if small else 24
+    c = QPointF(r.center().x(), r.center().y() - (16 if small else 24))
+    accent = QColor(skins.ACCENT)
+    glow = QColor(accent)
+    glow.setAlpha(45)
+    p.setPen(Qt.NoPen)
+    p.setBrush(glow)
+    p.drawEllipse(c, rad + 7, rad + 7)
+    p.setBrush(accent)
+    p.drawEllipse(c, rad, rad)
+    k = rad * 0.38
+    p.setPen(QPen(QColor("white"), 2.6, Qt.SolidLine, Qt.RoundCap))
+    p.drawLine(c + QPointF(-k, 0), c + QPointF(k, 0))
+    p.drawLine(c + QPointF(0, -k), c + QPointF(0, k))
+    f = QFont("Segoe UI")
+    f.setPixelSize(14)
+    f.setWeight(QFont.DemiBold)
+    p.setFont(f)
+    p.setPen(QColor("#f5f6fb") if dark else QColor("#1b1c22"))
+    top = c.y() + rad + 10
+    p.drawText(QRectF(r.left() + 8, top, r.width() - 16, 20), Qt.AlignCenter, title)
+    if hint and r.bottom() - (top + 22) >= 16:
+        f.setPixelSize(11)
+        f.setWeight(QFont.Normal)
+        p.setFont(f)
+        p.setPen(QColor("#b6bbcd") if dark else QColor("#565a6b"))
+        p.drawText(QRectF(r.left() + 14, top + 22, r.width() - 28, r.bottom() - top - 26),
+                   Qt.AlignHCenter | Qt.AlignTop | Qt.TextWordWrap, hint)
 
 
 def fit_rect(W, H, aspect, cx=0.5, cy=0.5, part=1.0):
@@ -71,7 +111,31 @@ class GifWidget(DesktopWidget):
         self.save_timer = QTimer(self, singleShot=True, interval=300, timeout=config.save)
         self.watch = QTimer(self, interval=500, timeout=self.sync)  # закрыт окном или игрой — гифку не крутим
         self.watch.start()
+        self.turn = QTimer(self, timeout=self.auto_next)  # несколько гифок — сменяются сами
+        self.slide = 0.0  # свайп: сдвиг гифки, px
+        self.slide_anim = None  # (откуда, куда, начало, шаг по списку в конце)
+        self.slide_timer = QTimer(self, interval=16, timeout=self.slide_tick)
+        self.apply_every()
         self.load()
+
+    @staticmethod
+    def summary(cfg):
+        """Сколько гифок — для карточки в каталоге."""
+        files = cfg.get("files")
+        if not isinstance(files, list) or not files:
+            files = [cfg["file"]] if isinstance(cfg.get("file"), str) else []
+        n = len(files)
+        if not n:
+            return tr("Гифки не выбраны")
+        if LANG == "en":
+            return f"{n} GIF" + ("" if n == 1 else "s")
+        if n % 10 == 1 and n % 100 != 11:
+            word = "гифка"
+        elif 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+            word = "гифки"
+        else:
+            word = "гифок"
+        return f"{n} {word}"
 
     # ---------- настройки ----------
 
@@ -113,6 +177,30 @@ class GifWidget(DesktopWidget):
         w, h = grid(*self.cells())
         self.setFixedSize(w + 2 * SHADOW, h + 2 * SHADOW)
 
+    # ---------- для редактора (общий с «Фото»: CropView и GifEditor спрашивают это) ----------
+    EDITOR_TITLE = tr("Редактор гифки")
+    EDITOR_PICK = tr("Выбрать гифку…")
+
+    def editor_pixmap(self):
+        return self.movie.currentPixmap() if self.movie is not None else None
+
+    def set_crop(self, rect):
+        self.cfg["rect"] = rect
+        self.changed()
+
+    def reset_crop(self):
+        self.cfg.pop("rect", None)  # рамка — снова весь кадр
+        self.changed()
+
+    def editor_items(self):
+        """(номер текущей, сколько всего) — для «‹ 2 из 3 ›» в редакторе."""
+        files = [f for f in self.files() if os.path.isfile(f)]
+        cur = self.cfg.get("file")
+        return (files.index(cur) if cur in files else 0), len(files)
+
+    def editor_step(self, step):
+        self.next_gif(step)
+
     def changed(self):
         """Настройку поменяли (в редакторе — ползунком, много раз подряд): показать сразу, сохранить чуть погодя."""
         if self.movie:
@@ -125,8 +213,14 @@ class GifWidget(DesktopWidget):
         self.refit()
         self.apply_size()
         self.flat_key = None
+        self.last_src = None
         if self.pinned:
             self.push()
+        self.keep_on_screen()
+        if self.editor is not None:  # поменяли из меню при открытом редакторе — и там тоже
+            self.editor.size.blockSignals(True)
+            self.editor.size.setCurrentIndex(SIZES.index((cols, rows)))
+            self.editor.size.blockSignals(False)
         self.changed()
 
     # ---------- гифка ----------
@@ -182,18 +276,95 @@ class GifWidget(DesktopWidget):
             movie.start()
             self.last_frame = now
 
-    def set_file(self, path):
-        self.cfg["file"] = path
-        self.cfg.pop("rect", None)  # у новой гифки свои размеры — рамка заново, весь кадр
+    # ---------- несколько гифок ----------
+    # Текущая — как раньше: cfg["file"] и её рамка cfg["rect"] (редактор работает с ними). Весь список —
+    # cfg["files"], рамки остальных — cfg["rects"][путь]: при смене текущая рамка уходит туда, следующая — оттуда.
+
+    def files(self):
+        files = self.cfg.get("files")
+        if isinstance(files, list) and files:
+            return [f for f in files if isinstance(f, str)]
+        return [self.cfg["file"]] if isinstance(self.cfg.get("file"), str) else []
+
+    def every(self):
+        v = self.cfg.get("every", 30)
+        return v if v in [s for s, _ in EVERY] else 30
+
+    def apply_every(self):
+        self.turn.setInterval(self.every() * 1000)
+        self.turn.start()
+
+    def set_every(self, seconds):
+        self.cfg["every"] = seconds
         config.save()
+        self.apply_every()
+
+    def show_file(self, path):
+        """Сделать текущей гифку из списка: рамку прошлой запомнить, рамку этой вернуть."""
+        cur = self.cfg.get("file")
+        rects = self.cfg.get("rects") if isinstance(self.cfg.get("rects"), dict) else {}
+        if cur and isinstance(self.cfg.get("rect"), list):
+            rects[cur] = self.cfg["rect"]
+        self.cfg["file"] = path
+        if isinstance(rects.get(path), list):
+            self.cfg["rect"] = rects[path]
+        else:
+            self.cfg.pop("rect", None)  # у новой гифки свои размеры — рамка заново, весь кадр
+        self.cfg["rects"] = {k: v for k, v in rects.items() if k in self.files() or k == path}
+        self.save_timer.start()
         self.load()
 
+    def auto_next(self):
+        if self.editor is None and not activity.covered(self):
+            self.next_gif()
+
+    def next_gif(self, step=1):
+        files = [f for f in self.files() if os.path.isfile(f)]
+        if len(files) < 2:
+            return
+        cur = self.cfg.get("file")
+        i = files.index(cur) if cur in files else -1
+        self.show_file(files[(i + step) % len(files)])
+        self.turn.start()  # отсчёт заново
+
+    def set_files(self, paths, show=None):
+        paths = list(dict.fromkeys(paths))[:MAX_FILES]
+        self.cfg["files"] = paths
+        if paths:
+            self.show_file(paths[0] if show is None else paths[show])
+        config.save()
+
+    def set_file(self, path):  # одна гифка (как раньше)
+        self.set_files([path])
+
+    def remove_current(self):
+        files = self.files()
+        cur = self.cfg.get("file")
+        if len(files) < 2 or cur not in files:
+            return
+        i = files.index(cur)
+        files.remove(cur)
+        self.cfg.pop("rect", None)
+        self.cfg["file"] = None  # рамку убранной не запоминать
+        self.set_files(files, show=i % len(files))
+
     # диалоги без родителя: под ярлыками окно виджета скрыто
+    def _ask(self):
+        paths, _ = QFileDialog.getOpenFileNames(None, tr("Гифки (можно несколько)"), self.cfg.get("file") or "",
+                                                tr("Гифки (*.gif *.webp)"))
+        return paths
+
     def pick(self):
-        path, _ = QFileDialog.getOpenFileName(None, tr("Гифка"), self.cfg.get("file", ""), tr("Гифки (*.gif *.webp)"))
-        if path:
-            self.set_file(path)
-        return bool(path)
+        paths = self._ask()
+        if paths:
+            self.set_files(paths)
+        return bool(paths)
+
+    def add_more(self):
+        paths = self._ask()
+        if paths:
+            have = self.files()
+            self.set_files(have + [p for p in paths if p not in have], show=len(have) if len(have) < MAX_FILES else None)
 
     def pick_and_edit(self):
         if self.pick() and self.movie is not None:
@@ -213,24 +384,91 @@ class GifWidget(DesktopWidget):
             self.editor = None
         config.save()
 
-    def first_setup(self):
-        if self.movie is None:
-            QTimer.singleShot(150, self.pick_and_edit)
-
     def add_actions(self, menu):
+        sub = menu.addMenu(tr("Размер по сетке"))  # то же, что в редакторе, — без него
+        for c, r in SIZES:
+            a = sub.addAction(f"{c} × {r}", lambda c=c, r=r: self.set_cells(c, r))
+            a.setCheckable(True)
+            a.setChecked((c, r) == self.cells())
         if self.movie is not None:
             menu.addAction(tr("Редактор гифки…"), self.edit)
-        menu.addAction(tr("Выбрать гифку…"), self.pick_and_edit)
+        menu.addAction(tr("Выбрать гифки…"), self.pick_and_edit)
+        if self.files():
+            menu.addAction(tr("Добавить гифки…"), self.add_more)
+        if len(self.files()) > 1:
+            menu.addAction(tr("Следующая гифка"), self.next_gif)
+            menu.addAction(tr("Убрать эту гифку"), self.remove_current)
+            sub = menu.addMenu(tr("Менять каждые"))
+            for seconds, text in EVERY:
+                a = sub.addAction(text, lambda s=seconds: self.set_every(s))
+                a.setCheckable(True)
+                a.setChecked(seconds == self.every())
+            sub = menu.addMenu(tr("Листать"))
+            for name, text in FLIP:
+                a = sub.addAction(text, lambda n=name: self.set_flip(n))
+                a.setCheckable(True)
+                a.setChecked(name == self.flip())
+        if activity.copies:
+            menu.addAction(tr("Ещё одна гифка"), lambda: activity.copies.add_copy(self.copy_of or self.key, self))
 
     def click(self, pos):
-        if self.movie is None:  # пустая рамка — выбрать гифку
-            self.pick_and_edit()
-            return True
-        return False
+        return False  # тащить можно всегда (и пустой); короткое нажатие — tap
 
-    def double_click(self):
-        if self.movie is not None:
-            self.edit()
+    def tap(self, pos):
+        if self.movie is None:  # пустой виджет — кнопка «Добавить гифку»
+            QTimer.singleShot(0, self.pick)
+            return
+        if len(self.files()) > 1 and self.flip() == "click":  # короткое нажатие — следующая
+            self.next_gif()
+
+    # ---------- свайп ----------
+
+    def flip(self):
+        return "swipe" if self.cfg.get("flip") == "swipe" else "click"
+
+    def set_flip(self, name):
+        self.cfg["flip"] = name
+        config.save()
+
+    def swiping(self):
+        return self.flip() == "swipe" and len(self.files()) > 1
+
+    def swipe_move(self, dx):
+        self.slide_timer.stop()
+        self.slide_anim = None
+        self.slide = float(dx) / self.scale()
+        self.update()
+
+    def swipe_end(self, dx):
+        """Дотянули — гифка уезжает в сторону свайпа, с другой стороны въезжает следующая (влево) или прошлая."""
+        w = self.card().width()
+        dx = float(dx) / self.scale()
+        if abs(dx) > min(60.0, w * 0.18):
+            step = 1 if dx < 0 else -1
+            self.slide_anim = (dx, -step * (w + 12), time.monotonic(), step)
+        else:
+            self.slide_anim = (dx, 0.0, time.monotonic(), 0)
+        self.slide_timer.start()
+
+    def slide_tick(self):
+        if self.slide_anim is None:
+            self.slide_timer.stop()
+            return
+        a, b, start, step = self.slide_anim
+        t = min(1.0, (time.monotonic() - start) / SLIDE)
+        self.slide = a + (b - a) * (1 - (1 - t) ** 3)
+        if t >= 1.0:
+            self.slide_timer.stop()
+            if step:  # уехала — следующая въезжает с другого края
+                self.next_gif(step)
+                w = self.card().width() + 12
+                self.slide_anim = (step * w, 0.0, time.monotonic(), 0)
+                self.slide = step * w
+                self.slide_timer.start()
+            else:
+                self.slide_anim = None
+                self.slide = 0.0
+        self.update()
 
     # перетащить гифку из Проводника прямо на виджет
     def dragEnterEvent(self, event):
@@ -238,16 +476,20 @@ class GifWidget(DesktopWidget):
             event.acceptProposedAction()
 
     def dropEvent(self, event):
-        path = self._dropped(event)
-        if path:
-            self.set_file(path)
+        paths = self._dropped(event)
+        if paths:
+            have = self.files()
+            if event.modifiers() & Qt.ControlModifier and have:  # с Ctrl — добавить к тем, что есть
+                self.set_files(have + [p for p in paths if p not in have], show=min(len(have), MAX_FILES - 1))
+            else:
+                self.set_files(paths)
             event.acceptProposedAction()
 
     @staticmethod
     def _dropped(event):
-        urls = event.mimeData().urls()
-        path = urls[0].toLocalFile() if urls else ""
-        return path if path.lower().endswith(EXTS) and os.path.isfile(path) else None
+        paths = [u.toLocalFile() for u in event.mimeData().urls()]
+        paths = [p for p in paths if p.lower().endswith(EXTS) and os.path.isfile(p)]
+        return paths or None
 
     def closeEvent(self, event):
         if self.editor is not None:
@@ -263,18 +505,28 @@ class GifWidget(DesktopWidget):
         r = QRectF(self.card())
         pix = self.movie.currentPixmap() if self.movie is not None else None
         if pix is None or pix.isNull():
-            small = r.height() < 200 and r.width() < 200
-            icon = icons.app_icon("gif", 48)
-            p.drawPixmap(QPointF(r.center().x() - 24, r.center().y() - (24 if small else 54)), icon)
-            if not small:
-                f = QFont("Segoe UI")
-                f.setPixelSize(12)
-                p.setFont(f)
-                p.setPen(QColor("#d8dae2") if self.dark else QColor("#565a6b"))
-                p.drawText(r.adjusted(16, r.height() / 2 + 8, -16, -12), Qt.AlignHCenter | Qt.AlignTop | Qt.TextWordWrap,
-                           tr("Нажми — выбрать гифку\nили перетащи её сюда"))
+            draw_add(p, r, bool(self.dark), tr("Добавить гифку"),
+                     tr("Под ярлыками: сначала «Двигать виджеты»") if self.pinned else tr("или перетащи сюда"))
             return
-        draw_gif(p, r, pix, self.crop(), RADIUS)
+        if self.slide:  # свайп — гифка едет за мышью, за краем карточки не видна
+            clip = QPainterPath()
+            clip.addRoundedRect(r, RADIUS, RADIUS)
+            p.save()
+            p.setClipPath(clip)
+            draw_gif(p, r.translated(self.slide, 0), pix, self.crop(), RADIUS)
+            p.restore()
+        else:
+            draw_gif(p, r, pix, self.crop(), RADIUS)
+        files = self.files()
+        n = len(files)
+        if 1 < n <= 12:  # точки — сколько гифок и какая сейчас
+            cur = files.index(self.cfg.get("file")) if self.cfg.get("file") in files else -1
+            d, gap = 6.0, 6.0
+            x = r.center().x() - (n * d + (n - 1) * gap) / 2
+            p.setPen(QPen(QColor(0, 0, 0, 70), 1.0))  # тонкая тень — точки видно и на светлой гифке
+            for i in range(n):
+                p.setBrush(QColor(255, 255, 255, 235 if i == cur else 110))
+                p.drawEllipse(QRectF(x + i * (d + gap), r.bottom() - 14, d, d))
 
 
 class CropView(QWidget):
@@ -351,8 +603,7 @@ class CropView(QWidget):
             wpx = max(1.0, min(wpx, room_x, room_y * aspect))
             w, h = wpx / W, wpx / aspect / H
             x, y = (ax if right else ax - w), (ay if down else ay - h)
-        self.widget.cfg["rect"] = [max(0.0, x), max(0.0, y), w, h]
-        self.widget.changed()
+        self.widget.set_crop([max(0.0, x), max(0.0, y), w, h])
         self.update()
 
     def mouseReleaseEvent(self, event):
@@ -362,7 +613,7 @@ class CropView(QWidget):
         p = QPainter(self)
         p.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
         w = self.widget
-        pix = w.movie.currentPixmap() if w.movie is not None else None
+        pix = w.editor_pixmap()
         img = self.image_rect()
         if pix is None or pix.isNull() or img.isEmpty():
             return
@@ -396,6 +647,7 @@ QPushButton { background: #2a2c35; color: #e8e9ee; border: none; border-radius: 
 QPushButton:hover { background: #353846; }
 QPushButton#main { background: #2f6bff; color: white; }
 QPushButton#main:hover { background: #4a7fff; }
+QPushButton#nav { padding: 4px 14px; font-size: 18px; border-radius: 14px; }
 QComboBox { background: #2a2c35; color: #e8e9ee; border: none; border-radius: 10px; padding: 6px 12px; font-size: 13px; }
 QComboBox::drop-down { border: none; width: 24px; }
 QComboBox QAbstractItemView { background: #23252d; color: #e8e9ee; selection-background-color: #2f6bff; border: none; }
@@ -411,7 +663,7 @@ class GifEditor(QDialog):
     def __init__(self, widget):
         super().__init__(None)
         self.widget = widget
-        self.setWindowTitle(tr("Редактор гифки"))
+        self.setWindowTitle(widget.EDITOR_TITLE)
         self.setWindowFlag(Qt.WindowStaysOnTopHint, True)
         self.setWindowFlag(Qt.WindowContextHelpButtonHint, False)
         self.setStyleSheet(EDITOR_STYLE)
@@ -420,6 +672,22 @@ class GifEditor(QDialog):
         lay.setSpacing(14)
         self.view = CropView(widget)
         lay.addWidget(self.view, alignment=Qt.AlignHCenter)
+        # несколько фото / гифок — листать прямо в редакторе: у каждой своя рамка
+        nav = QHBoxLayout()
+        nav.setSpacing(10)
+        self.prev_btn = QPushButton("‹", objectName="nav")
+        self.next_btn = QPushButton("›", objectName="nav")
+        self.where = QLabel("", objectName="dim")
+        self.where.setAlignment(Qt.AlignCenter)
+        self.where.setMinimumWidth(90)
+        self.prev_btn.clicked.connect(lambda: self.step(-1))
+        self.next_btn.clicked.connect(lambda: self.step(1))
+        nav.addStretch()
+        nav.addWidget(self.prev_btn)
+        nav.addWidget(self.where)
+        nav.addWidget(self.next_btn)
+        nav.addStretch()
+        lay.addLayout(nav)
         hint = QLabel(tr("Тяни за углы рамки или двигай её — что в рамке, то и на виджете"), objectName="dim")
         hint.setAlignment(Qt.AlignHCenter)
         lay.addWidget(hint)
@@ -438,16 +706,18 @@ class GifEditor(QDialog):
         self.size.currentIndexChanged.connect(lambda i: widget.set_cells(*SIZES[i]))
         grid_lay.addWidget(self.size, row, 1, 1, 2, Qt.AlignLeft)
         row += 1
-        # скорость
-        self.speed, self.speed_value = self._slider(grid_lay, row, tr("Скорость"), 25, 300, widget.speed(),
-                                                    lambda v: self._put("speed", v))
-        row += 1
+        # скорость — только у гифок
+        self.speed = None
+        if hasattr(widget, "speed"):
+            self.speed, self.speed_value = self._slider(grid_lay, row, tr("Скорость"), 25, 300, widget.speed(),
+                                                        lambda v: self._put("speed", v))
+            row += 1
         lay.addLayout(grid_lay)
 
         buttons = QHBoxLayout()
         buttons.setSpacing(10)
-        pick = QPushButton(tr("Выбрать гифку…"))
-        pick.clicked.connect(lambda: widget.pick())
+        pick = QPushButton(widget.EDITOR_PICK)
+        pick.clicked.connect(lambda: (widget.pick(), self.update_nav()))
         reset = QPushButton(tr("Сбросить"))
         reset.clicked.connect(self.reset)
         done = QPushButton(tr("Готово"), objectName="main")
@@ -458,6 +728,18 @@ class GifEditor(QDialog):
         buttons.addStretch()
         buttons.addWidget(done)
         lay.addLayout(buttons)
+        self.update_nav()
+
+    def update_nav(self):
+        i, n = self.widget.editor_items()
+        for w in (self.prev_btn, self.next_btn, self.where):
+            w.setVisible(n > 1)
+        self.where.setText(tr("{} из {}").format(i + 1, n))
+
+    def step(self, d):
+        self.widget.editor_step(d)
+        self.update_nav()
+        self.view.update()
 
     @staticmethod
     def _slider(lay, row, text, low, high, value, on_change):
@@ -478,6 +760,6 @@ class GifEditor(QDialog):
         self.widget.changed()
 
     def reset(self):
-        self.speed.setValue(100)
-        self.widget.cfg.pop("rect", None)  # рамка — снова весь кадр
-        self.widget.changed()
+        if self.speed is not None:
+            self.speed.setValue(100)
+        self.widget.reset_crop()

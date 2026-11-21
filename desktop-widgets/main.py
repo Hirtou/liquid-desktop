@@ -8,6 +8,7 @@ for _var in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
     os.environ.setdefault(_var, "1")
 
 import ctypes
+import hashlib
 import json
 import sys
 import threading
@@ -17,7 +18,8 @@ import winreg
 from functools import lru_cache
 
 import numpy as np
-from PySide6.QtCore import QEasingCurve, QEvent, QPointF, QProcess, QRectF, Qt, QTimer, QVariantAnimation, Signal
+from PySide6.QtCore import (QEasingCurve, QEvent, QPoint, QPointF, QProcess, QPropertyAnimation, QRectF, Qt, QTimer,
+                            QVariantAnimation, Signal)
 from PySide6.QtGui import QColor, QCursor, QFont, QFontMetricsF, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import (QAbstractButton, QApplication, QFrame, QGraphicsOpacityEffect, QGridLayout,
@@ -27,7 +29,7 @@ from PySide6.QtWidgets import (QAbstractButton, QApplication, QFrame, QGraphicsO
 
 import applog
 import bugreport
-import updater
+import ipc
 import skins
 import core
 import glass
@@ -129,6 +131,10 @@ class Switch(QAbstractButton):
 
     def set_quiet(self, on):
         """Переключить без анимации (при запуске)."""
+        # идущая анимация (виджет только что выключили и тут же включили) иначе дорисует старое состояние:
+        # тумблер оставался синим с бегунком слева
+        self.anim.stop()
+        self.fade.stop()
         self.blockSignals(True)
         self.setChecked(on)
         self.blockSignals(False)
@@ -242,9 +248,8 @@ class TitleButton(QAbstractButton):
 class PillButton(QAbstractButton):
     """Стеклянная кнопка-капсула с текстом."""
 
-    def __init__(self, text, accent=False):
+    def __init__(self, text):
         super().__init__(cursor=Qt.PointingHandCursor)
-        self.accent = accent  # синяя (как выбранный вариант) — заметная: «Установить обновление»
         self.setText(text)
         self.setAttribute(Qt.WA_Hover)
         self.setFixedHeight(32)
@@ -253,22 +258,47 @@ class PillButton(QAbstractButton):
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        if self.accent:
-            r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
-            hover = self.underMouse()
-            p.setPen(Qt.NoPen)
-            p.setBrush(QColor(ACCENT).lighter(112 if hover else 100) if self.isEnabled() else QColor(47, 107, 255, 120))
-            p.drawRoundedRect(r, r.height() / 2, r.height() / 2)
-            p.setPen(QColor("#ffffff"))
-            p.drawText(r, Qt.AlignCenter, self.text())
-            return
         dark = bool(self.window().dark)
         hover = self.underMouse()
         r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
         p.setPen(QPen(QColor(255, 255, 255, 60 if dark else 170), 1))
         p.setBrush(QColor(255, 255, 255, (45 if hover else 25) if dark else (190 if hover else 130)))
         p.drawRoundedRect(r, r.height() / 2, r.height() / 2)
-        p.setPen(QColor("#f5f6fb" if dark else "#2a2c33"))
+        color = QColor("#f5f6fb" if dark else "#2a2c33")
+        if self.text() == "set":  # набор: четыре квадратика крестом (2 × 2), сколько в наборе — точкой-числом
+            c, s, g = r.center(), 5.2, 2.2
+            p.setPen(Qt.NoPen)
+            p.setBrush(color)
+            for dx in (-1, 1):
+                for dy in (-1, 1):
+                    x = c.x() + (g / 2 if dx > 0 else -g / 2 - s)
+                    y = c.y() + (g / 2 if dy > 0 else -g / 2 - s)
+                    p.drawRoundedRect(QRectF(x, y, s, s), 1.6, 1.6)
+            n = getattr(self, "badge", 0)
+            if n > 1:
+                b = QRectF(r.right() - 13, r.top() - 3, 16, 16)
+                p.setBrush(QColor(ACCENT))
+                p.setPen(QPen(QColor(0, 0, 0, 60), 1))
+                p.drawEllipse(b)
+                f = QFont("Segoe UI")
+                f.setPixelSize(10)
+                f.setWeight(QFont.DemiBold)
+                p.setFont(f)
+                p.setPen(QColor("white"))
+                p.drawText(b, Qt.AlignCenter, str(n))
+            return
+        if self.text() in ("+", "×"):  # значок линиями, ровно по центру (шрифтом «+» съезжал вниз)
+            c, k = r.center(), 5.5
+            p.setPen(QPen(color, 1.8, Qt.SolidLine, Qt.RoundCap))
+            if self.text() == "+":
+                p.drawLine(QPointF(c.x() - k, c.y()), QPointF(c.x() + k, c.y()))
+                p.drawLine(QPointF(c.x(), c.y() - k), QPointF(c.x(), c.y() + k))
+            else:
+                k *= 0.78
+                p.drawLine(QPointF(c.x() - k, c.y() - k), QPointF(c.x() + k, c.y() + k))
+                p.drawLine(QPointF(c.x() - k, c.y() + k), QPointF(c.x() + k, c.y() - k))
+            return
+        p.setPen(color)
         p.drawText(r, Qt.AlignCenter, self.text())
 
 
@@ -430,11 +460,36 @@ class FlowGrid(QWidget):
         self.items = []
         self._laid = None
 
-    def add(self, w):
+    def add(self, w, index=None):
         w.setParent(self)
-        self.items.append(w)
+        self.items.insert(len(self.items) if index is None else index, w)
         self._laid = None
         self.relayout()
+
+    def reorder(self, items, animate=True):
+        """Новый порядок карточек (сортировка): каждая плавно переезжает на своё новое место."""
+        old = {w: w.pos() for w in self.items}
+        self.items = list(items)
+        self._laid = None
+        self.relayout()
+        if not animate:
+            return
+        self._anims = []
+        for w in self.items:
+            new = w.pos()
+            if w in old and old[w] != new:
+                w.move(old[w])
+                a = QPropertyAnimation(w, b"pos", self, duration=380, startValue=old[w], endValue=new,
+                                       easingCurve=QEasingCurve.OutCubic)
+                a.start()
+                self._anims.append(a)
+
+    def remove(self, w):
+        if w in self.items:
+            self.items.remove(w)
+            w.hide()
+            self._laid = None
+            self.relayout()
 
     def columns(self, width):
         return max(1, (width + self.gap) // (self.cell_w + self.gap))
@@ -459,9 +514,15 @@ class FlowGrid(QWidget):
         self.relayout()
 
 
+SHOTS = os.path.join(ROOT, "preview_cache")  # готовые снимки превью каталога (у каждого — свои, не публикуются)
+SHOT_AFTER = 6.0  # сколько секунд копия живёт до снимка: погода, музыка и нагрузка успевают подгрузиться
+
+
 class Preview(QWidget):
-    """Живое превью: скрытая копия виджета на красивом фоне, с настоящим стеклом.
-    Каталог раз в секунду её фотографирует — часы идут, нагрузка и погода настоящие."""
+    """Превью в каталоге — готовый снимок виджета (картинка в preview_cache), а не живая копия.
+    Снимка нет (первый раз, поменяли настройки виджета, тему стекла или язык) — на несколько секунд создаётся
+    скрытая копия виджета на красивом фоне с настоящим стеклом; пока она живёт, превью обновляется,
+    потом последний кадр сохраняется, копия удаляется. Дальше — только картинка: ни таймеров, ни памяти."""
 
     W, H = 222, 112
 
@@ -474,13 +535,46 @@ class Preview(QWidget):
         self.key = None
         self.pix = None
         self.bg = None
+        self.shown = None  # имя снимка, который сейчас показан
+        self.copy_name = None  # для какого снимка живёт копия
+
+    def shot_name(self, dark):
+        """Имя снимка: виджет, тема окна, тема стекла, язык, чёткость экрана и «отпечаток» настроек виджета
+        и стекла — поменялось что-то из этого, снимок нужен новый."""
+        cfg = config.section(self.cls.key)
+        app = config.section("app")
+        data = {k: v for k, v in cfg.items() if k not in ("x", "y", "visible", "theme")}
+        data["_glass"] = [app.get(k) for k in ("fill", "blur", "haze", "acrylic")]
+        sig = hashlib.md5(json.dumps(data, sort_keys=True, default=str, ensure_ascii=False).encode()).hexdigest()[:10]
+        theme = "".join(ch for ch in str(skins.current_id()) if ch.isalnum())[:24]
+        return f"{self.cls.key}_{'d' if dark else 'l'}_{theme}_{LANG}_{self.devicePixelRatioF():g}_{sig}.png"
 
     def ready(self):
-        """Копия виджета уже есть — обновить её дёшево (снимок ~1–2 мс). Нет — создавать дорого (20–350 мс)."""
-        return self.copy is not None
+        """Дёшево обновить: снимок уже показан (или копия живёт). Нет — создавать копию дорого (20–350 мс)."""
+        if self.copy is not None:
+            return True
+        try:
+            return self.shown == self.shot_name(bool(self.window().dark))
+        except Exception:
+            return False
 
     def refresh(self, dark):
+        name = self.shot_name(dark)
         if self.copy is None:
+            if self.shown == name:
+                return  # готовый снимок уже на месте
+            path = os.path.join(SHOTS, name)
+            if os.path.isfile(path):
+                pix = QPixmap(path)
+                if not pix.isNull():
+                    pix.setDevicePixelRatio(self.devicePixelRatioF())
+                    self.final, self.shown = pix, name
+                    self.update()
+                    return
+        elif self.copy_name != name:  # пока копия жила, поменяли настройки — снимать с нуля
+            self.release()
+        if self.copy is None:
+            self.born, self.copy_name = time.monotonic(), name
             self.copy = self.cls()
             self.copy.preview = True  # превью — всегда обычного размера (настройка «Размер» — у самого виджета)
             if self.copy.base:
@@ -498,6 +592,25 @@ class Preview(QWidget):
         self.dst = QRectF(self.ox * self.s, self.oy * self.s, w.width() * self.s, w.height() * self.s)
         self.compose()
         self.update()
+        if time.monotonic() - self.born >= SHOT_AFTER and self.final is not None:
+            self.save_shot(name)
+
+    def save_shot(self, name):
+        """Последний кадр — в файл, старые снимки этого виджета в той же теме окна — долой, копию — долой."""
+        try:
+            os.makedirs(SHOTS, exist_ok=True)
+            prefix = f"{self.cls.key}_{name[len(self.cls.key) + 1]}_"
+            for old in os.listdir(SHOTS):
+                if old.startswith(prefix) and old != name:
+                    try:
+                        os.remove(os.path.join(SHOTS, old))
+                    except OSError:
+                        pass
+            self.final.save(os.path.join(SHOTS, name), "PNG")
+        except OSError as err:  # папка только для чтения — не беда, просто снимем в следующий раз
+            applog.line(f"превью: снимок {self.cls.key} не сохранён ({err})")
+        self.shown = name
+        self.release()
 
     def compose(self):
         """Фон + уменьшенный снимок, скруглённые — одной картинкой: прокрутка каталога рисует превью каждый кадр,
@@ -528,6 +641,7 @@ class Preview(QWidget):
             self.copy.deleteLater()
             self.copy = None
             self.key = None
+            self.copy_name = None
 
     def _build(self, dark):
         """Стекло копии — из фона превью (масштаб: виджет целиком влезает в карточку)."""
@@ -541,7 +655,7 @@ class Preview(QWidget):
                           card.width() + 2 * glass.PAD, card.height() + 2 * glass.PAD)
         app = config.section("app")
         w.glass_img, d = glass.render(src, card.width(), card.height(), RADIUS, "dark" if dark else "light",
-                                      app.get("fill"), app.get("blur"), app.get("haze"))
+                                      app.get("fill"), *skins.glass_params(app.get("blur"), app.get("haze")))
         w.shadow_img = glass.render_shadow(card.width(), card.height(), RADIUS, SHADOW, d)
         w.set_dark(d)
         rgba = np.dstack([scene, np.full(scene.shape[:2], 255, np.uint8)])
@@ -583,6 +697,13 @@ class CardText(QWidget):
         self.setToolTip(text)
         self._key, self._pix = None, None
 
+    def set_text(self, text):
+        if text != self.text:
+            self.text = text
+            self.setToolTip(text)
+            self._key = None
+            self.update()
+
     def paintEvent(self, event):
         dark = bool(self.window().dark)
         dpr = self.devicePixelRatioF()
@@ -622,7 +743,7 @@ class CardText(QWidget):
 class Card(QFrame):
     """Карточка виджета: живое превью, название, описание, тумблер. Клик по карточке — тоже переключает."""
 
-    def __init__(self, cls, on_click):
+    def __init__(self, cls, on_click, on_more=None, on_remove=None):
         # фон рисуется сам (paintEvent), а не стилем QFrame#card: стиль со скруглением — самое дорогое
         # в кадре прокрутки
         super().__init__(objectName="tile", cursor=Qt.PointingHandCursor)
@@ -638,7 +759,21 @@ class Card(QFrame):
         row.setContentsMargins(6, 0, 0, 0)
         # значок, название и описание — одна готовая картинка (CardText), а не QLabel'ы со стилем:
         # при прокрутке каталога каждый кадр перерисовывает ~20 видимых карточек, по 0.7 мс каждая было
-        row.addWidget(CardText(icons.app_icon(cls.key, 22), cls.title, cls.description), 1)
+        self.text = CardText(icons.app_icon(cls.copy_of or cls.key, 22), cls.title, cls.description)
+        row.addWidget(self.text, 1)
+        if on_remove is not None:  # копия фото / гифки — убрать совсем
+            gone = PillButton("×")
+            gone.setFixedSize(32, 32)
+            gone.setToolTip(tr("Удалить этот виджет"))
+            gone.clicked.connect(lambda: on_remove())
+            row.addWidget(gone, alignment=Qt.AlignVCenter)
+        self.set_btn = None
+        if on_more is not None:  # фото и гифки — набор: окно со всеми такими виджетами, там же «Добавить»
+            more = self.set_btn = PillButton("set")
+            more.setFixedSize(32, 32)
+            more.setToolTip(tr("Набор: все такие виджеты, добавить ещё один"))
+            more.clicked.connect(lambda: on_more())
+            row.addWidget(more, alignment=Qt.AlignVCenter)
         self.switch = Switch()
         self.switch.setToolTip(tr("Включить или выключить этот виджет на рабочем столе"))
         self.switch.clicked.connect(lambda: on_click())  # clicked передаёт bool — его не пускаем дальше
@@ -696,6 +831,7 @@ class Catalog(DesktopWidget):
         self.setWindowIcon(make_icon())
         self.instances = {}
         self.cards = {}
+        self.sets = {}  # окна наборов «Фото» и «Гифки» (создаются при первом открытии)
         self.quitting = False
 
         lay = QVBoxLayout(self)
@@ -730,12 +866,6 @@ class Catalog(DesktopWidget):
         self.section_bar.changed.connect(self.show_section)
         head.addWidget(self.section_bar, alignment=Qt.AlignTop)
         head.addStretch()
-        # появляется в шапке, когда на GitHub вышла новая версия (её находит updater раз в 6 часов)
-        self.update_btn = PillButton(tr("Установить обновление"), accent=True)
-        self.update_btn.setToolTip(tr("Вышла новая версия. Скачается и встанет поверх — виджеты и настройки останутся."))
-        self.update_btn.hide()
-        head.addWidget(self.update_btn, alignment=Qt.AlignTop)
-        head.addSpacing(8)
         self.title_label, self.sub_label = title, sub
         # язык — в шапке: в нижней строке настроек ему не хватало места (окно расползалось вширь)
         lang_tip = tr("Язык меняется перезапуском программы (пара секунд).")
@@ -766,10 +896,11 @@ class Catalog(DesktopWidget):
         lay.addLayout(head)
 
         # карточки — в прокрутке: виджетов много, окно не должно вылезать за экран
-        content = FlowGrid(244, 196, 12, right=6)
+        content = self.grid = FlowGrid(244, 196, 12, right=6)
         content.setAttribute(Qt.WA_TranslucentBackground)
         for cls in widgets.ALL:
-            card = Card(cls, lambda c=cls: self.toggle(c))
+            card = Card(cls, lambda c=cls: self.toggle(c),
+                        (lambda c=cls: self.open_set(c.key)) if cls.key in widgets.COPYABLE else None)
             card.setFixedSize(244, 196)
             content.add(card)
             self.cards[cls.key] = card
@@ -791,6 +922,19 @@ class Catalog(DesktopWidget):
         page_lay = QVBoxLayout(page)
         page_lay.setContentsMargins(0, 0, 0, 0)
         page_lay.setSpacing(14)
+        sort_row = QHBoxLayout()
+        sort_row.setContentsMargins(4, 0, 0, 0)
+        sort_row.setSpacing(10)
+        sort_label = QLabel(tr("Порядок"), objectName="dim")
+        sort_row.addWidget(sort_label)
+        mode = config.section("app").get("catalog_sort", "default")
+        self.sort_bar = Segmented([("default", tr("Обычный")), ("az", tr("А–Я")), ("on", tr("Включённые"))],
+                                  mode if mode in ("default", "az", "on") else "default")
+        self.sort_bar.setToolTip(tr("Порядок карточек: как задумано, по алфавиту или сначала те, что на рабочем столе"))
+        self.sort_bar.changed.connect(self.set_sort)
+        sort_row.addWidget(self.sort_bar)
+        sort_row.addStretch()
+        page_lay.addLayout(sort_row)
         page_lay.addWidget(self.scroll)
 
         # настройки приложения
@@ -824,27 +968,6 @@ class Catalog(DesktopWidget):
         self.on_shots.toggled.connect(self.set_on_screenshots)
         row.addWidget(self.on_shots)
         row.addSpacing(10)
-        self.under_label = QLabel(tr("Под ярлыками"))
-        self.under_label.setToolTip(tr("Вкл — виджеты как обои: ярлыки и папки лежат на них.\n"
-                                    "Выкл — обычные окна на рабочем столе: под всеми окнами, но над ярлыками.\n"
-                                    "С Wallpaper Engine не работает: его видео закрывает всё под ярлыками —\n"
-                                    "тогда виджеты остаются обычными окнами."))
-        row.addWidget(self.under_label)
-        child_label = QLabel(tr("В рабочем столе (тест)"))
-        child_label.setToolTip(tr("Вкл — виджеты становятся частью рабочего стола, как ярлыки: Win+D и окна других программ их не двигают и не прячут. Стекло тогда берётся из обоев (живого акрила нет). Пока проверяем — может глючить."))
-        self.desktop_child = Switch()
-        self.desktop_child.setToolTip(child_label.toolTip())
-        self.desktop_child.set_quiet(bool(config.section("app").get("desktop_child", False)))
-        self.desktop_child.toggled.connect(self.set_desktop_child)
-        self.under_icons = Switch()
-        self.under_icons.setToolTip(self.under_label.toolTip())
-        self.under_icons.set_quiet(config.section("app").get("under_icons", False))
-        self.under_icons.toggled.connect(self.set_under_icons)
-        row.addWidget(self.under_icons)
-        row.addSpacing(10)
-        row.addWidget(child_label)
-        row.addWidget(self.desktop_child)
-        row.addSpacing(10)
         game_tip = tr("Пока открыта игра или видео на весь экран, виджеты замирают на всех мониторах:\n"
                       "не рисуют, не снимают стекло и не опрашивают датчики, пинг и плеер.\n"
                       "Закрыл или свернул игру — сразу оживают со свежими данными.\n"
@@ -857,6 +980,23 @@ class Catalog(DesktopWidget):
         self.game_pause.set_quiet(config.section("app").get("game_pause", True))
         self.game_pause.toggled.connect(self.set_game_pause)
         row.addWidget(self.game_pause)
+        # закрепить места и магнит — раз виджеты таскаются всегда, случайно сдвинуть их легко
+        for key, text, default, tip in (
+                ("locked", tr("Закрепить"), False,
+                 tr("Виджеты не сдвинуть мышью — случайно не уедут.\n"
+                    "Клики, меню, свайп у фото и прокрутка работают как обычно.")),
+                ("snap", tr("Магнит"), True,
+                 tr("Виджет липнет к краям экрана и к соседним виджетам — ровными рядами.\n"
+                    "Выкл — ставится точно куда отпустил. Разово без магнита — тащить с Alt."))):
+            row.addSpacing(10)
+            label = QLabel(text)
+            label.setToolTip(tip)
+            row.addWidget(label)
+            sw = Switch()
+            sw.setToolTip(tip)
+            sw.set_quiet(bool(config.section("app").get(key, default)))
+            sw.toggled.connect(lambda on, k=key: self.set_app_flag(k, on))
+            row.addWidget(sw)
         app = config.section("app")
         self.glass_labels = {}
         for key, text, lo, hi, default, unit, tip in (
@@ -907,11 +1047,11 @@ class Catalog(DesktopWidget):
         glass_row.addWidget(self.acrylic)
         glass_row.addStretch()
         row.addStretch()
-        self.move_btn = PillButton(tr("Двигать виджеты"))
-        self.move_btn.setToolTip(tr("Виджеты вшиты под ярлыки рабочего стола — мышь до них не достаёт.\n"
-                                 "Нажми, чтобы поднять их наверх: таскать, писать в заметках, правый клик."))
-        self.move_btn.clicked.connect(lambda: self.set_editing(not activity.editing))
-        row.addWidget(self.move_btn)
+        refresh_btn = PillButton(tr("Обновить виджеты"))
+        refresh_btn.setToolTip(tr("Виджеты съехали, пропали или зависли (например, после игры) — вернуть их\n"
+                                  "на свои места, показать и перерисовать стекло. Ничего не сбрасывается."))
+        refresh_btn.clicked.connect(self.refresh_widgets)
+        row.addWidget(refresh_btn)
         quit_btn = PillButton(tr("Выйти из программы"))
         quit_btn.setToolTip(tr("Закрыть программу совсем: виджеты уберутся с рабочего стола, значок в трее пропадёт."))
         quit_btn.clicked.connect(self.quit)
@@ -923,7 +1063,7 @@ class Catalog(DesktopWidget):
         self.pages = {"widgets": page}
         for name, sec in (("island", sections.IslandPage(Switch, Segmented)),
                           ("weather", sections.WeatherPage(Switch, Segmented, PillButton)),
-                          ("themes", sections.ThemesPage())):
+                          ("themes", sections.ThemesPage(Segmented, PillButton))):
             holder = QScrollArea(widgetResizable=True, frameShape=QFrame.NoFrame)
             holder.setWidget(sec)
             holder.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -933,7 +1073,6 @@ class Catalog(DesktopWidget):
             self.pages[name] = holder
         lay.addWidget(self.stack)
         self.tray = None
-        self.tray_move = None
         self.told_tray = False
 
         for cls in widgets.ALL:
@@ -946,6 +1085,18 @@ class Catalog(DesktopWidget):
                     self.cards[cls.key].switch.set_quiet(False)
             else:
                 self.cards[cls.key].switch.set_quiet(False)
+        activity.copies = self
+        QTimer.singleShot(0, lambda: self.apply_sort(animate=False))
+        for base, nums in self.copy_list().items():  # свои копии фото и гифок
+            for n in nums:
+                cls = widgets.copy_class(base, n)
+                if config.section(cls.key).get("visible", True):
+                    try:
+                        self.toggle(cls)
+                    except Exception as _err:
+                        applog.error("main.Catalog.copies", _err)
+                        self.instances.pop(cls.key, None)
+        self.refresh_counts()
 
         # превью обновляются раз в секунду, только пока каталог открыт
         self.preview_timer = QTimer(self, interval=2000, timeout=self.refresh_previews)  # чаще — зря грузит процессор
@@ -1050,6 +1201,7 @@ class Catalog(DesktopWidget):
         # только карточки, которые сейчас видно в прокрутке — остальные не рисуем зря.
         # Готовые — обновить сразу (дёшево); новые — в очередь, по одной между кадрами (иначе зависание на секунды)
         self.build_queue = []
+        self.refresh_counts()
         for card in self.cards.values():
             if card.visibleRegion().isEmpty():
                 continue
@@ -1080,15 +1232,6 @@ class Catalog(DesktopWidget):
         # пока — последние кадры превью, они сохраняются между открытиями
         QTimer.singleShot(350, self.refresh_previews)
         self.preview_timer.start()
-        self.update_under_label()
-
-    def update_under_label(self):
-        """Подпись у «Под ярлыками»: с Wallpaper Engine режим не работает — так и пишем."""
-        # коротко: длинная подпись раздвигала окно каталога шире сетки; пояснение — в подсказке и серым цветом
-        self.under_label.setText(tr("Под ярлыками") + (" *" if activity.wpe else ""))
-        self.under_label.setObjectName("dim" if activity.wpe else "")  # серым: с Wallpaper Engine не работает
-        self.under_label.style().unpolish(self.under_label)
-        self.under_label.style().polish(self.under_label)
 
     def release(self):
         """Окно убрали с глаз: отпустить превью и своё стекло (окно большое — снимок под ним,
@@ -1174,13 +1317,33 @@ class Catalog(DesktopWidget):
         if hasattr(self, "cards") and self.isVisible():
             self.refresh_previews()  # превью — в тон окну
 
+    def refresh_widgets(self):
+        """«Обновить виджеты»: каждый — на сохранённое место (если оно видно на экранах), показать, если пропал,
+        развернуть, если свернулся, заново поставить над рабочим столом и пересчитать стекло."""
+        applog.line("обновить виджеты: " + ", ".join(self.instances))
+        activity._widgets = None
+        for w in list(self.instances.values()):
+            try:
+                w._rect_cache = None
+                if w.isMinimized():
+                    w.showNormal()
+                elif not w.isVisible() and not w.pinned:
+                    w.show()
+                w.restore_place()
+                w.flat_key = None
+                w.last_src = None
+                w.setup_capture()
+                w.set_rate()
+                w.sync_topmost()
+                w.rebuild()
+                w.update()
+            except Exception as err:  # один сломанный — остальные всё равно обновить
+                applog.error("main.Catalog.refresh_widgets", err)
+
     def set_editing(self, on):
-        """«Двигать виджеты»: поднять их наверх (обычные окна) или вшить обратно под ярлыки."""
+        """Режим «Двигать виджеты» (поднять все наверх). Кнопки больше нет (20.11.2026): виджеты — обычные окна,
+        таскаются и так; остался только для команды «--cmd edit» / «pin»."""
         activity.editing = on
-        self.move_btn.setText(tr("Готово") if on else tr("Двигать виджеты"))
-        self.move_btn.update()
-        if self.tray_move:
-            self.tray_move.setText(tr("Готово (вшить виджеты)") if on else tr("Двигать виджеты"))
         for w in list(self.instances.values()):
             w.place()
 
@@ -1210,44 +1373,31 @@ class Catalog(DesktopWidget):
         QProcess.startDetached(sys.executable, [os.path.join(ROOT, "main.py"), "--restart"])
         self.quit()
 
+    def set_app_flag(self, key, on):
+        config.section("app")[key] = bool(on)
+        config.save()
+
     def set_game_pause(self, on):
         config.section("app")["game_pause"] = on
         config.save()
         for w in activity.widgets():  # прямо во время игры (виджет «поверх окон» на втором мониторе) — сразу
             w.update()
 
-    def set_under_icons(self, on):
-        """Режим: под ярлыками (как обои) или обычно (окна на рабочем столе)."""
-        config.section("app")["under_icons"] = on
-        config.save()
-        activity.under_icons = on
-        self.update_under_label()
-        for w in list(self.instances.values()):
-            w.place()
-
     def set_theme_all(self, name):
         """Тема сразу у всех виджетов (и у выключенных — когда включишь, будет такая же)."""
         config.section("app")["theme"] = name
         for cls in widgets.ALL:
             config.section(cls.key)["theme"] = name
+        for base, nums in self.copy_list().items():
+            for n in nums:
+                config.section(f"{base}_{n}")["theme"] = name
         self.cfg["theme"] = name  # и сам каталог (у него тоже стекло) — иначе над светлыми обоями он белый
         config.save()
-        for w in [self, *self.instances.values()]:
+        for w in [self, *self.instances.values(), *self.sets.values()]:
             w.last_src = None
             w.flat_key = None
             w.rebuild()
         self.refresh_previews()
-
-    def set_desktop_child(self, on):
-        """Виджеты внутри рабочего стола (desktop_host.py) — или снова отдельными окнами."""
-        config.section("app")["desktop_child"] = bool(on)
-        config.save()
-        for w in list(self.instances.values()):
-            if not w.placed:
-                continue
-            if not on and w.desktop_host is not None:
-                w.desktop_host.detach()
-            w.place()
 
     def set_acrylic(self, on):
         config.section("app")["acrylic"] = on
@@ -1292,16 +1442,134 @@ class Catalog(DesktopWidget):
             config.save()
             w.close()
             return
+        w = self.spawn(cls)
+        if self.isVisible() and hasattr(w, "first_setup"):  # включили руками — сразу спросить настройку
+            w.first_setup()
+        for switch in self.switches(cls.key):
+            if not switch.isChecked():  # включили не кликом (при запуске) — без анимации
+                switch.set_quiet(True)
+        self.refresh_counts()
+
+    def set_sort(self, mode):
+        config.section("app")["catalog_sort"] = mode
+        config.save()
+        self.apply_sort()
+        self.scroll.verticalScrollBar().setValue(0)  # к началу — видно, как легло
+
+    def apply_sort(self, animate=True):
+        """Порядок карточек: «Обычный» — как в widgets.ALL, «А–Я» — по названию (на языке программы),
+        «Включённые» — сначала те, что на рабочем столе (у фото и гифок — хоть один из набора), дальше по алфавиту."""
+        mode = config.section("app").get("catalog_sort", "default")
+        order = list(widgets.ALL)
+
+        def name(c):
+            return c.title.casefold().replace("ё", "е")
+
+        def on(c):
+            keys = self.set_keys(c.key) if c.key in widgets.COPYABLE else [c.key]
+            return any(k in self.instances for k in keys)
+        if mode == "az":
+            order.sort(key=name)
+        elif mode == "on":
+            order.sort(key=lambda c: (not on(c), name(c)))
+        cards = [self.cards[c.key] for c in order if c.key in self.cards]
+        if cards != self.grid.items:
+            self.grid.reorder(cards, animate=animate and self.isVisible())
+        self.refresh_previews()
+
+    def switches(self, key):
+        """Переключатели виджета: карточка в каталоге и плитка в окне набора (у копий — только она)."""
+        out = [self.cards[key].switch] if key in self.cards else []
+        base = key.rsplit("_", 1)[0] if key not in widgets.COPYABLE else key
+        sw = self.sets.get(base)
+        if sw is not None and key in sw.cards:
+            out.append(sw.cards[key].switch)
+        return out
+
+    def open_set(self, base):
+        sw = self.sets.get(base)
+        if sw is None:
+            sw = self.sets[base] = SetWindow(self, base)
+            self.refresh_counts()
+        sw.open()
+
+    def set_keys(self, base):
+        return [base] + [f"{base}_{n}" for n in self.copy_list().get(base, [])]
+    def spawn(self, cls):
         w = cls(on_closed=self.closed)
         self.instances[cls.key] = w
         w.place()  # под ярлыки (или под окна, если идут живые обои)
-        if self.isVisible() and hasattr(w, "first_setup"):  # включили руками — сразу спросить настройку
-            w.first_setup()
         config.section(cls.key)["visible"] = True
         config.save()
-        switch = self.cards[cls.key].switch
-        if not switch.isChecked():  # включили не кликом (при запуске) — без анимации
-            switch.set_quiet(True)
+        return w
+
+    # ---------- копии (несколько фото, несколько гифок) ----------
+
+    def copy_list(self):
+        raw = config.section("app").get("copies")
+        raw = raw if isinstance(raw, dict) else {}
+        return {b: [n for n in v if isinstance(n, int) and n > 1] for b, v in raw.items()
+                if b in widgets.COPYABLE and isinstance(v, list)}
+
+    def add_copy(self, base, near=None):
+        """Ещё один виджет «Фото» / «Гифка»: свой ключ (photo_2…) и свои настройки, ставится рядом с исходным."""
+        copies = self.copy_list()
+        nums = copies.setdefault(base, [])
+        n = max([1] + nums) + 1
+        nums.append(n)
+        config.section("app")["copies"] = copies
+        cls = widgets.copy_class(base, n)
+        config.data.pop(cls.key, None)  # остатки от удалённой копии с тем же номером — не нужны
+        sec = config.section(cls.key)
+        sec["theme"] = config.section(base).get("theme", config.section("app").get("theme", "auto"))
+        near = near or self.instances.get(base)
+        if near is not None and near.isVisible():
+            sec["x"], sec["y"] = near.x() + near.card().width() + core.GAP, near.y()
+        w = self.spawn(cls)
+        if near is not None:
+            w.keep_on_screen()
+        if base in self.sets:
+            self.sets[base].add_card(cls.key)  # плитка в окне набора — уже включённой
+        self.refresh_counts()
+        return w  # пустой — сам показывает «Добавить фото / гифку», ничего не спрашиваем
+
+    def remove_copy(self, key):
+        """«Удалить этот виджет» у копии (меню виджета или «×» на карточке): убрать и забыть её настройки."""
+        base = key.rsplit("_", 1)[0]
+        copies = self.copy_list()
+        if base not in copies:
+            return
+        copies[base] = [n for n in copies[base] if f"{base}_{n}" != key]
+        config.section("app")["copies"] = {b: v for b, v in copies.items() if v}
+        config.section(key)["visible"] = False
+        w = self.instances.get(key)
+        if w is not None:
+            w.close()
+        if base in self.sets:
+            self.sets[base].remove_card(key)
+        config.data.pop(key, None)
+        config.save()
+        self.refresh_counts()
+
+    def refresh_counts(self):
+        """Карточки фото и гифок: что в каждом виджете и сколько таких виджетов включено."""
+        if not getattr(self, "cards", None):
+            return
+        for base, cls in widgets.COPYABLE.items():
+            keys = self.set_keys(base)
+            on = sum(1 for k in keys if k in self.instances)
+            texts = {k: cls.summary(config.section(k)) for k in keys}
+            card = self.cards.get(base)
+            if card is not None:
+                if len(keys) > 1:
+                    card.text.set_text(tr("В наборе {} · включено {}").format(len(keys), on))
+                else:
+                    card.text.set_text(texts[base])
+                if card.set_btn is not None and getattr(card.set_btn, "badge", 0) != len(keys):
+                    card.set_btn.badge = len(keys)
+                    card.set_btn.update()
+            if base in self.sets:
+                self.sets[base].set_counts(texts, on, len(keys))
 
     def closed(self, w):
         if self.quitting:
@@ -1314,9 +1582,10 @@ class Catalog(DesktopWidget):
         # удалить окно сейчас и здесь, в главном потоке; иначе последняя ссылка может остаться
         # у фонового потока (снимок экрана, погода), и окно удалится оттуда — это вылет
         w.deleteLater()
-        card = self.cards[w.key]
-        if card.switch.isChecked():
-            card.switch.toggle()
+        for switch in self.switches(w.key):  # копию могли удалить — плитки уже нет
+            if switch.isChecked():
+                switch.toggle()
+        self.refresh_counts()
 
     def report_bug(self, button):
         bugreport.report_telegram()
@@ -1324,6 +1593,218 @@ class Catalog(DesktopWidget):
     def quit(self):
         self.quitting = True
         QApplication.quit()
+
+
+class AddTile(QWidget):
+    """Плитка «Добавить» в окне набора: пунктирная рамка, круглый «+» цвета акцента, подпись."""
+
+    def __init__(self, title, text, on_click):
+        super().__init__(cursor=Qt.PointingHandCursor)
+        self.setAttribute(Qt.WA_Hover)
+        self.title, self.text, self.on_click = title, text, on_click
+        self.setFixedSize(244, 196)
+
+    def enterEvent(self, event):
+        self.update()
+
+    def leaveEvent(self, event):
+        self.update()
+
+    def mousePressEvent(self, event):
+        event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton and self.rect().contains(event.position().toPoint()):
+            self.on_click()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHints(QPainter.Antialiasing | QPainter.TextAntialiasing)
+        dark = bool(self.window().dark)
+        hover = self.underMouse()
+        th = glass.THEMES[dark]
+        r = QRectF(self.rect()).adjusted(1, 1, -1, -1)
+        p.setBrush(css_color(th["cardhover" if hover else "card"]))
+        pen = QPen(QColor(255, 255, 255, 90 if dark else 210), 1.4, Qt.DashLine)
+        pen.setDashPattern([5, 4])
+        p.setPen(pen)
+        p.drawRoundedRect(r, 20, 20)
+        c = QPointF(r.center().x(), r.center().y() - 22)
+        rad = 26 if hover else 24
+        accent = QColor(ACCENT)
+        glow = QColor(accent)
+        glow.setAlpha(60 if hover else 35)
+        p.setPen(Qt.NoPen)
+        p.setBrush(glow)
+        p.drawEllipse(c, rad + 8, rad + 8)
+        p.setBrush(accent)
+        p.drawEllipse(c, rad, rad)
+        p.setPen(QPen(QColor("white"), 2.6, Qt.SolidLine, Qt.RoundCap))
+        p.drawLine(c + QPointF(-9, 0), c + QPointF(9, 0))
+        p.drawLine(c + QPointF(0, -9), c + QPointF(0, 9))
+        f = QFont("Segoe UI")
+        f.setPixelSize(15)
+        f.setWeight(QFont.DemiBold)
+        p.setFont(f)
+        p.setPen(QColor(th["fg"]))
+        p.drawText(QRectF(r.left(), c.y() + 36, r.width(), 22), Qt.AlignCenter, self.title)
+        f.setPixelSize(12)
+        f.setWeight(QFont.Normal)
+        p.setFont(f)
+        p.setPen(QColor(th["dim"]))
+        p.drawText(QRectF(r.left() + 16, c.y() + 58, r.width() - 32, 34), Qt.AlignHCenter | Qt.AlignTop | Qt.TextWordWrap,
+                   self.text)
+
+
+class SetWindow(DesktopWidget):
+    """Набор «Фото» или «Гифок»: все такие виджеты плитками (живое превью, переключатель, удалить)
+    и плитка «Добавить». Открывается кнопкой с квадратиками на карточке в каталоге."""
+    key = "sets"
+    title = tr("Набор")
+    keep_bottom = False
+    shadow_ready = Signal(object, object)
+    TEXTS = {"photo": (tr("Фото"), tr("Каждая фоторамка — отдельный виджет: свои фото, размер и место"),
+                       tr("Добавить фоторамку"), tr("Ещё один виджет со своими фото")),
+             "gif": (tr("Гифки"), tr("Каждая гифка — отдельный виджет: свои гифки, размер и место"),
+                     tr("Добавить гифку"), tr("Ещё один виджет со своими гифками"))}
+
+    def __init__(self, catalog, base):
+        super().__init__()
+        self.catalog, self.kind = catalog, base
+        self.setWindowTitle(self.TEXTS[base][0])
+        self.setWindowIcon(make_icon())
+        self.shadow_ready.connect(self.on_shadow)
+        self.cards = {}
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(22, 18, 18, 22)
+        lay.setSpacing(14)
+        head = QHBoxLayout()
+        titles = QVBoxLayout()
+        titles.setSpacing(0)
+        title = QLabel(self.TEXTS[base][0])
+        title.setStyleSheet("font-size: 26px; font-weight: 600;")
+        self.sub = QLabel("", objectName="dim")
+        self.sub.setStyleSheet("font-size: 12px;")
+        titles.addWidget(title)
+        titles.addWidget(self.sub)
+        head.addLayout(titles)
+        head.addStretch()
+        close = TitleButton("close")
+        close.setToolTip(tr("Закрыть"))
+        close.clicked.connect(self.close)
+        head.addWidget(close, alignment=Qt.AlignTop)
+        lay.addLayout(head)
+        self.grid = FlowGrid(244, 196, 12, right=6)
+        self.grid.setAttribute(Qt.WA_TranslucentBackground)
+        self.scroll = QScrollArea(widgetResizable=True, frameShape=QFrame.NoFrame)
+        self.scroll.setWidget(self.grid)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll.setStyleSheet(SCROLL_STYLE)
+        self.scroll.viewport().setAutoFillBackground(False)
+        self.scroll.setFixedWidth(3 * 256 - 12 + 6 + 10)
+        lay.addWidget(self.scroll)
+        hint = QLabel(tr("Правый клик по виджету на столе — его фото, интервал и «Листать: кликом или свайпом»")
+                      if base == "photo" else
+                      tr("Правый клик по виджету на столе — его гифки, интервал и «Листать: кликом или свайпом»"),
+                      objectName="dim")
+        hint.setStyleSheet("font-size: 12px;")
+        lay.addWidget(hint)
+        _, _, add_title, add_text = self.TEXTS[base]
+        self.add_tile = AddTile(add_title, add_text, lambda: catalog.add_copy(base))
+        self.grid.add(self.add_tile)
+        for key in catalog.set_keys(base):
+            self.add_card(key)
+        self.preview_timer = QTimer(self, interval=2000, timeout=self.refresh_previews)
+        self.update_size()
+
+    # окно — как каталог: сплошное стекло, своя тень, есть на панели задач
+    apply_flags = Catalog.apply_flags
+    flat_mode = Catalog.flat_mode
+    make_shadow = Catalog.make_shadow
+    on_shadow = Catalog.on_shadow
+    auto_dark = Catalog.__dict__["auto_dark"]  # тема «Авто» (по умолчанию): без этого окно набора падало при открытии
+
+    def update_flat(self):
+        self.cfg["theme"] = self.catalog.cfg.get("theme", "auto")  # тема — та же, что у каталога
+        Catalog.update_flat(self)
+
+    def contextMenuEvent(self, event):
+        pass
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            self.close()
+
+    def add_card(self, key):
+        if key in widgets.COPYABLE:
+            cls = widgets.COPYABLE[key]
+        else:
+            base, n = key.rsplit("_", 1)
+            cls = widgets.copy_class(base, int(n))
+        card = Card(cls, lambda c=cls: self.catalog.toggle(c), None,
+                    None if key == self.kind else (lambda k=key: self.catalog.remove_copy(k)))
+        card.setFixedSize(244, 196)
+        self.grid.add(card, len(self.grid.items) - 1)  # плитка «Добавить» — всегда последняя
+        self.cards[key] = card
+        card.switch.set_quiet(key in self.catalog.instances)
+        self.update_size()
+        if self.isVisible():
+            QTimer.singleShot(0, lambda: card.preview.refresh(bool(self.dark)))
+        return card
+
+    def remove_card(self, key):
+        card = self.cards.pop(key, None)
+        if card is not None:
+            card.preview.release()
+            self.grid.remove(card)
+            card.deleteLater()
+            self.update_size()
+
+    def update_size(self):
+        rows = (len(self.grid.items) + 2) // 3
+        self.scroll.setFixedHeight(min(rows, 2) * 208 - 12)
+        self.adjustSize()
+
+    def set_counts(self, texts, on, total):
+        for key, text in texts.items():
+            if key in self.cards:
+                self.cards[key].text.set_text(text)
+        self.sub.setText(tr("На рабочем столе {} из {}").format(on, total))
+
+    def refresh_previews(self):
+        for card in self.cards.values():
+            card.preview.refresh(bool(self.dark))
+
+    def open(self):
+        """Над каталогом, по центру его окна."""
+        self.adjustSize()
+        anchor = self.catalog if self.catalog.isVisible() and not self.catalog.isMinimized() else None
+        center = anchor.frameGeometry().center() if anchor else self.screen().availableGeometry().center()
+        self.move(center - self.rect().center())
+        if not self.isVisible():
+            self.setWindowOpacity(0.0)
+        if self.isMinimized():
+            self.showNormal()
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        QTimer.singleShot(300, self.refresh_previews)
+        self.preview_timer.start()
+
+    def hideEvent(self, event):
+        self.preview_timer.stop()
+        for card in self.cards.values():
+            card.preview.release()
+        self.glass_img = self.last_src = None
+        self.flat_key = None
+        super().hideEvent(event)
+
+    def closeEvent(self, event):
+        event.ignore()  # не удалять — просто спрятать до следующего раза
+        self.hide()
 
 
 LOG_PATH = os.path.join(ROOT, "widgets.log")
@@ -1393,11 +1874,7 @@ def island_launch():
 
 
 def island_alive():
-    probe = QLocalSocket()
-    probe.connectToServer(ISLAND_SERVER)
-    alive = probe.waitForConnected(200)
-    probe.abort()
-    return alive
+    return ipc.alive(ISLAND_SERVER)  # без ожидания в главном потоке (см. ipc.py)
 
 
 def watch_island(app):
@@ -1473,10 +1950,11 @@ def main():
     elif already_running():
         return
     setup_log()  # после проверки: вторая копия (просит открыть окно и выходит) журнал не трогает
-    skins.apply(config.section("app").get("skin", "liquid"))
+    skins.apply(config.section("app").get("skin", "liquid"), config.section("app").get("custom_skin"))
     applog.log_screens(app)
     app.setQuitOnLastWindowClosed(False)
     app.setFont(QFont("Segoe UI", 10))
+    core.accent_palette()  # ползунки — цветом темы
     catalog = Catalog()
     if autostart_enabled():
         set_autostart(True)  # обновить запись автозапуска до текущей (с --tray)
@@ -1540,10 +2018,10 @@ def main():
     menu = QMenu()
     menu.addAction(tr("Открыть"), catalog.open)
     core.skin_menu(menu)
-    catalog.tray_move = menu.addAction(tr("Двигать виджеты"), lambda: catalog.set_editing(not activity.editing))
+    menu.addAction(tr("Обновить виджеты"), catalog.refresh_widgets)
     menu.addAction(tr("Сообщить об ошибке"), bugreport.report)
     menu.addAction(tr("Поддержать автора"), bugreport.support)
-    sep = menu.addSeparator()
+    menu.addSeparator()
     menu.addAction(tr("Выход"), catalog.quit)
     tray.setContextMenu(menu)
     tray.activated.connect(lambda reason: catalog.open() if reason == QSystemTrayIcon.Trigger else None)
@@ -1554,7 +2032,6 @@ def main():
         # поставить его ещё раз, когда вход в систему закончится
         for delay in (15000, 60000):
             QTimer.singleShot(delay, lambda: (tray.hide(), tray.show()))
-    catalog.updater = updater.Updater(tray, menu, sep, catalog.quit, catalog.update_btn)
 
     def on_game(playing):
         tray.setToolTip(tr("Виджеты — игровой режим: всё на паузе")

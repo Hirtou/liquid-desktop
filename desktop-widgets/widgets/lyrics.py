@@ -60,8 +60,63 @@ def _get(url):
     raise OSError(tr("нет связи с LRCLIB"))
 
 
+BRACKETS = re.compile(r"\s*[\(\[【「].*?[\)\]】」]")
+TAIL = re.compile(r"(?i)\s*[|/]\s*.*$|\s+(?:official|lyrics?|lyric video|music video|mv|клип|кавер|cover|prod\.?|"
+                  r"ft\.?|feat\.?)\b.*$")
+DASH = re.compile(r"\s+[-–—]\s+")
+
+
+def variants(artist, title):
+    """Названия с YouTube: «Песня (Official Video)», «ПЕСНЯ (КАВЕР на …)», «Исполнитель - Песня [Lyrics]»,
+    слова со звёздочкой «ИНЦ*СТА». В LRCLIB так не записано — пробуем очищенные варианты по очереди."""
+    out = []
+
+    def add(a, t):
+        t = " ".join(t.split()).strip(" -–—_.,")
+        a = " ".join((a or "").split())
+        if t and (a, t) not in out and (artist, title) != (a, t):
+            out.append((a, t))
+
+    t = TAIL.sub("", BRACKETS.sub("", title))
+    add(artist, t)
+    parts = DASH.split(t, maxsplit=1)
+    if len(parts) == 2:  # «Исполнитель - Песня» в названии (канал не того исполнителя)
+        add(parts[0], parts[1])
+    return out
+
+
 def fetch(artist, title, duration):
     """-> {"synced": [(t, строка)], "plain": [строки], "instrumental": bool} или None (не нашлось)."""
+    found = fetch_one(artist, title, duration)
+    if found is None:
+        for a, t in variants(artist, title):
+            found = fetch_one(a, t, duration)
+            if found is not None:
+                break
+    if found is None and "*" in title:  # «инц*ста»: свободный поиск без слова со звёздочкой
+        words = [w for w in TAIL.sub("", BRACKETS.sub("", title)).split() if "*" not in w]
+        if words:
+            found = search_q(" ".join(words + [artist or ""]).strip(), title, duration)
+    return found
+
+
+def search_q(q, title, duration):
+    """Свободный поиск LRCLIB; берём, только если длительность сходится (иначе это чужая песня)."""
+    if not duration:
+        return None
+    found = _get(API + "search?" + urllib.parse.urlencode({"q": q})) or []
+    found = [f for f in found if (f.get("syncedLyrics") or f.get("plainLyrics"))
+             and abs((f.get("duration") or 0) - duration) < 4]
+    if not found:
+        return None
+    found.sort(key=lambda f: (not f.get("syncedLyrics"), abs((f.get("duration") or 0) - duration)))
+    d = found[0]
+    return {"synced": parse_lrc(d.get("syncedLyrics")),
+            "plain": [l.strip() for l in (d.get("plainLyrics") or "").splitlines()],
+            "instrumental": bool(d.get("instrumental"))}
+
+
+def fetch_one(artist, title, duration):
     q = {"artist_name": artist, "track_name": title}
     if duration:
         q["duration"] = int(round(duration))
@@ -174,6 +229,8 @@ class LyricsWidget(DesktopWidget):
     def load(self, song, duration):
         key = f"{song[0]} — {song[1]}".lower()
         cached = self.cache.get(key)
+        if cached is not None and cached.get("none") and cached.get("v", 1) < 2:
+            cached = None  # «не нашлось» до очистки названий с YouTube — поискать ещё раз
         if cached is not None:
             self.on_loaded(song, cached)
             return
@@ -188,7 +245,7 @@ class LyricsWidget(DesktopWidget):
             if found not in (None, "error"):
                 self.cache.put(key, found)
             elif found is None:
-                self.cache.put(key, {"synced": [], "plain": [], "instrumental": False, "none": True})
+                self.cache.put(key, {"synced": [], "plain": [], "instrumental": False, "none": True, "v": 2})
             try:
                 self.loaded.emit(song, found)
             except RuntimeError:  # виджет закрыли

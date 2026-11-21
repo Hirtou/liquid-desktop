@@ -37,8 +37,131 @@ SKINS = {
                     rim=("#ffffff", 0.18, 1.0), glow=None, accent="#8c8c96", accent2="#c4c4cc", dark=True),
     "auto": dict(name=tr("Авто"), sub=tr("цвет из обоев"), tint=("auto", 0.40), blur=3, haze=0,
                  rim=("auto", 0.8, 1.0), glow=None, accent="auto", accent2="auto", dark=None),
+    # своя тема: цвета берутся из config["app"]["custom_skin"] (см. CUSTOM_DEFAULT, set_custom)
+    "custom": dict(name=tr("Кастомная"), sub=tr("свои цвета и свечение"), tint=("custom",), blur=None, haze=None,
+                   rim=("custom",), glow=None, accent="custom", accent2="custom", dark=True),
 }
-ORDER = ["liquid", "night", "neon", "sunset", "sakura", "forest", "minimal", "auto"]
+ORDER = ["liquid", "night", "neon", "sunset", "sakura", "forest", "minimal", "auto", "custom"]
+
+# Своя тема. Цвет — "#RRGGBBAA" (как в CSS). Градиент: вид (linear/radial), угол (как в CSS: 0 — снизу вверх,
+# 90 — слева направо) и точки [цвет, место 0..100].
+# Свечение: horizontal — слева один цвет, справа другой; vertical — сверху и снизу; cross — 4 цвета
+# (сверху, справа, снизу, слева).
+CUSTOM_DEFAULT = dict(
+    glow=True, layout="horizontal",
+    glow_colors=["#c8c8d2ff", "#8a8a96ff", "#c8c8d2ff", "#8a8a96ff"],
+    fill=dict(kind="linear", angle=135, stops=[["#3a3a42d0", 0], ["#24242ad0", 100]]),
+    rim=dict(kind="linear", angle=180, stops=[["#e6e6eeff", 0], ["#9a9aa6ff", 100]]),
+    accent=dict(kind="linear", angle=90, stops=[["#8c8c96ff", 0], ["#c4c4ccff", 100]]),
+)
+_custom = None  # своя тема сейчас (словарь как CUSTOM_DEFAULT)
+FILL_MAX = 0.42  # заливка своей темы сильнее не бывает: под ней должно оставаться живое стекло
+
+
+def custom_spec(spec=None):
+    """Своя тема с подставленными недостающими полями (старый или битый конфиг не роняет программу)."""
+    import copy
+    out = copy.deepcopy(CUSTOM_DEFAULT)
+    if isinstance(spec, dict):
+        for k in out:
+            if k in spec and type(spec[k]) is type(out[k]):
+                out[k] = copy.deepcopy(spec[k])
+    if out["layout"] not in ("horizontal", "vertical", "cross"):
+        out["layout"] = "horizontal"
+    while len(out["glow_colors"]) < 4:
+        out["glow_colors"].append("#ffffffff")
+    for key in ("fill", "rim", "accent"):
+        g = out[key]
+        if g.get("kind") not in ("linear", "radial"):
+            g["kind"] = "linear"
+        try:
+            g["angle"] = int(g.get("angle", 90)) % 360
+            g["stops"] = sorted(([str(c), max(0, min(100, int(at)))] for c, at in g["stops"]), key=lambda s: s[1])
+        except Exception:
+            g.update(copy.deepcopy(CUSTOM_DEFAULT[key]))
+        if not g["stops"]:
+            g["stops"] = copy.deepcopy(CUSTOM_DEFAULT[key]["stops"])
+        if len(g["stops"]) > 6:  # старый конфиг с сотней точек (спамили «+») — оставить 6 через равные шаги
+            st = g["stops"]
+            g["stops"] = [st[round(i * (len(st) - 1) / 5)] for i in range(6)]
+    return out
+
+
+def rgba(s):
+    """"#RRGGBBAA" / "#RRGGBB" -> QColor (у Qt 8 знаков — это #AARRGGBB, поэтому разбираем сами)."""
+    h = str(s).lstrip("#")
+    try:
+        if len(h) == 8:
+            return QColor(int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), int(h[6:8], 16))
+        if len(h) == 6:
+            return QColor(int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+    except ValueError:
+        pass
+    return QColor(255, 255, 255)
+
+
+def hex_rgba(c):
+    """QColor -> "#RRGGBBAA"."""
+    return "#%02x%02x%02x%02x" % (c.red(), c.green(), c.blue(), c.alpha())
+
+
+def _stops(g):
+    return [(at / 100.0, rgba(c)) for c, at in sorted(g["stops"], key=lambda s: s[1])]
+
+
+def qt_gradient(g, rect, alpha=1.0):
+    """Градиент своей темы кистью Qt на прямоугольник rect (alpha — общий множитель прозрачности)."""
+    import math
+    from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QLinearGradient, QRadialGradient
+    c = rect.center()
+    if g["kind"] == "radial":
+        q = QRadialGradient(c, max(1.0, math.hypot(rect.width(), rect.height()) / 2))
+    else:
+        a = math.radians(g["angle"])
+        dx, dy = math.sin(a), -math.cos(a)
+        half = (abs(rect.width() * dx) + abs(rect.height() * dy)) / 2
+        q = QLinearGradient(QPointF(c.x() - dx * half, c.y() - dy * half), QPointF(c.x() + dx * half, c.y() + dy * half))
+    for at, col in _stops(g):
+        col.setAlpha(int(col.alpha() * alpha))
+        q.setColorAt(at, col)
+    return q
+
+
+def gradient_array(g, w, h):
+    """Градиент своей темы по пикселям: (h·w, 4) float32, RGBA 0..255 — для оттенка стекла."""
+    import math
+    xs = np.arange(w, dtype=np.float32)[None, :] + 0.5 - w / 2
+    ys = np.arange(h, dtype=np.float32)[:, None] + 0.5 - h / 2
+    if g["kind"] == "radial":
+        t = np.sqrt(xs ** 2 + ys ** 2) / max(1.0, math.hypot(w, h) / 2)
+    else:
+        a = math.radians(g["angle"])
+        dx, dy = math.sin(a), -math.cos(a)
+        half = max(1e-3, (abs(w * dx) + abs(h * dy)) / 2)
+        t = (xs * dx + ys * dy) / (2 * half) + 0.5
+    t = np.clip(t, 0, 1).reshape(-1)
+    st = _stops(g)
+    at = np.array([s[0] for s in st], np.float32)
+    out = np.empty((t.size, 4), np.float32)
+    for i, ch in enumerate(("red", "green", "blue", "alpha")):
+        out[:, i] = np.interp(t, at, np.array([getattr(s[1], ch)() for s in st], np.float32))
+    return out
+
+
+def glow_layout(force=False):
+    """Раскладка свечения своей темы: (вид, [цвета]) или None — у остальных тем свечение сверху вниз.
+    force — даже если сейчас включена другая тема (карточка своей темы в каталоге)."""
+    c = _custom or custom_spec()
+    if (_current != "custom" and not force) or not c["glow"]:
+        return None
+    return c["layout"], [rgba(x) for x in c["glow_colors"]]
+
+
+def custom_dark(spec):
+    """Своя тема тёмная, если заливка тёмная (иначе текст на светлой заливке — тёмный, как в светлых темах)."""
+    st = _stops(spec["fill"])
+    return sum(c.lightnessF() for _, c in st) / len(st) < 0.55
 
 ACCENT = QColor("#2f6bff")    # общий акцент: кнопки, кольца, галочки, полоски
 ACCENT2 = QColor("#36c6ff")   # светлая пара к акценту (второй конец градиента у колец)
@@ -108,12 +231,21 @@ def _read_wallpaper(path):
     return tint, acc, acc2
 
 
-def apply(skin_id):
-    """Включить тему: перекрасить общие цвета акцента. Виджеты после этого нужно перерисовать (см. main)."""
-    global _current, version, _auto
+def apply(skin_id, custom=None):
+    """Включить тему: перекрасить общие цвета акцента. Виджеты после этого нужно перерисовать (см. main).
+    custom — настройки своей темы (config["app"]["custom_skin"])."""
+    global _current, version, _auto, _custom
     _current = skin_id if skin_id in SKINS else "liquid"
+    _custom = custom_spec(custom)
+    _grad_cache.clear()
     s = SKINS[_current]
-    if s["accent"] == "auto":
+    s_custom = SKINS["custom"]
+    s_custom["dark"] = True if custom_dark(_custom) else None
+    s_custom["glow"] = ("grad", "#ffffff", "#ffffff") if _custom["glow"] else None
+    if s["accent"] == "custom":
+        st = _stops(_custom["accent"])
+        acc, acc2 = st[0][1], st[-1][1]
+    elif s["accent"] == "auto":
         _auto = _from_wallpaper()
         acc, acc2 = (_auto[1], _auto[2]) if _auto else (QColor("#2f6bff"), QColor("#36c6ff"))
     else:
@@ -128,10 +260,22 @@ def theme(cfg_theme):
     return "dark" if current()["dark"] else cfg_theme
 
 
+BLUR_DEFAULT, HAZE_DEFAULT, HAZE_MIN = 6, 50, -50  # ползунки «Размытие» / «Замутнение» по умолчанию (как в glass)
+
+
 def glass_params(blur, haze):
-    """Размытие и замутнение: у темы свои, у Liquid — из настроек."""
+    """Размытие и замутнение с учётом темы. У Liquid и своей темы — ровно из настроек. У остальных тем свой
+    характер (Минимал плоский, Ночь плотная), но ползунки двигают и их: раньше тема подставляла свои числа,
+    и «Размытие» / «Замутнение» в темах ничего не меняли. Сдвиг ползунка от значения по умолчанию
+    прибавляется к числу темы."""
     s = current()
-    return (blur if s["blur"] is None else s["blur"]), (haze if s["haze"] is None else s["haze"])
+    blur = BLUR_DEFAULT if blur is None else blur
+    haze = HAZE_DEFAULT if haze is None else haze
+    if s["blur"] is not None:
+        blur = max(0, min(10, s["blur"] + blur - BLUR_DEFAULT))
+    if s["haze"] is not None:
+        haze = max(HAZE_MIN, min(100, s["haze"] + haze - HAZE_DEFAULT))
+    return blur, haze
 
 
 _grad_cache = {}
@@ -143,6 +287,22 @@ def tint_params(w, h):
     t = current()["tint"]
     if not t:
         return -1, None
+    if t[0] == "custom":
+        g = _custom["fill"]
+        key = (w, h, "custom", repr(g))
+        hit = _grad_cache.get(key)
+        if hit is None:
+            arr = gradient_array(g, w, h)
+            # непрозрачность 100% — самый сильный оттенок, но стекло всё равно просвечивает (FILL_MAX): со
+            # сплошной заливкой акрил пропадал — карточки становились плоскими цветными плашками
+            a = arr[:, 3:4] / 255 * FILL_MAX
+            k = float(a.mean())
+            hit = (k, (arr[:, :3] * a).astype(np.int16))
+            if len(_grad_cache) > 64:
+                _grad_cache.clear()
+            _grad_cache[key] = hit
+        k, add = hit
+        return int(round((1 - k) * 64)), add
     if t[0] == "grad":
         k = t[3]
         key = (w, h, t[1], t[2], k)
@@ -195,6 +355,8 @@ def _mix(a, b):
 def rim_pen(rect, dark):
     """Кромка карточки / острова: (градиент сверху вниз, толщина). Одна функция для виджетов и острова."""
     from PySide6.QtGui import QLinearGradient
+    if _current == "custom":
+        return qt_gradient(_custom["rim"], rect, 0.75 if dark else 1.0), (1.4 if _custom["glow"] else 1.1)
     spec = _rim_spec(current())
     top, bottom, strength, width = spec if spec else (QColor(255, 255, 255), QColor(255, 255, 255), 1.0, 1.0)
     a = (0.55 if dark else 1.0) * (1.6 if spec else 1.0) * strength
@@ -231,19 +393,23 @@ def _soft(a, r):
     return a
 
 
-def glow_image(path, w, h, margin, top, bottom, strength=0.55, spread=7, res=1.0):
+def glow_image(path, w, h, margin, top, bottom, strength=0.55, spread=7, res=1.0, layout=None):
     """Ореол неоновой трубки вокруг формы path (координаты 0..w, 0..h): кромка формы, размытая в мягкое свечение,
     раскрашенное сверху вниз (top -> bottom), без самой формы внутри. Картинка (w+2·margin)×(h+2·margin),
     форма — со сдвигом margin. Считается в половинном размере (быстро, ореол всё равно мягкий)."""
     from PySide6.QtCore import QPointF, Qt
     from PySide6.QtGui import QImage, QPainter, QPen
+    import math
     k = 0.5 * res
-    W, H = max(1, int((w + 2 * margin) * k)), max(1, int((h + 2 * margin) * k))
+    # размер картинки — целые пиксели, а масштаб — ровно под них (kx, ky): при масштабе экрана 125% округление
+    # растягивало ореол при выводе, и он получался «не по размеру и кривой» (Диар)
+    W, H = max(1, math.ceil((w + 2 * margin) * k)), max(1, math.ceil((h + 2 * margin) * k))
+    kx, ky = W / (w + 2 * margin), H / (h + 2 * margin)
     mask = QImage(W, H, QImage.Format_Alpha8)
     mask.fill(0)
     p = QPainter(mask)
     p.setRenderHint(QPainter.Antialiasing)
-    p.scale(k, k)
+    p.scale(kx, ky)
     p.translate(QPointF(margin, margin))
     p.setPen(QPen(Qt.white, 2.5))
     p.setBrush(Qt.NoBrush)
@@ -257,7 +423,7 @@ def glow_image(path, w, h, margin, top, bottom, strength=0.55, spread=7, res=1.0
     inside.fill(0)
     p = QPainter(inside)
     p.setRenderHint(QPainter.Antialiasing)
-    p.scale(k, k)
+    p.scale(kx, ky)
     p.translate(QPointF(margin, margin))
     p.setPen(Qt.NoPen)
     p.setBrush(Qt.white)
@@ -265,15 +431,58 @@ def glow_image(path, w, h, margin, top, bottom, strength=0.55, spread=7, res=1.0
     p.end()
     ins = np.frombuffer(inside.constBits(), np.uint8).reshape(H, inside.bytesPerLine())[:, :W].astype(np.float32) / 255
     a *= 1 - ins
-    t = np.linspace(0, 1, H, dtype=np.float32)[:, None]
-    c0 = np.array([top.red(), top.green(), top.blue()], np.float32)
-    c1 = np.array([bottom.red(), bottom.green(), bottom.blue()], np.float32)
-    col = c0 * (1 - t[..., None]) + c1 * t[..., None]  # H×1×3
-    rgba = np.empty((H, W, 4), np.uint8)
-    rgba[..., :3] = np.broadcast_to(col, (H, W, 3)) * a[..., None]  # premultiplied
-    rgba[..., 3] = (a * 255).astype(np.uint8)
-    img = QImage(rgba.data, W, H, W * 4, QImage.Format_RGBA8888_Premultiplied).copy()
+    lay = layout or glow_layout()
+    if lay is None:
+        t = np.linspace(0, 1, H, dtype=np.float32)[:, None]
+        c0 = np.array([top.red(), top.green(), top.blue()], np.float32)
+        c1 = np.array([bottom.red(), bottom.green(), bottom.blue()], np.float32)
+        col = np.broadcast_to(c0 * (1 - t[..., None]) + c1 * t[..., None], (H, W, 3))  # H×1×3
+    else:
+        # раскладка — по самой форме, а не по картинке: у острова картинка во всё окно, а капсула — вверху,
+        # и «сверху/снизу», «крест» считались от середины окна (капсула вся была «верхнего» цвета)
+        br = path.boundingRect()
+        box = ((br.left() + margin) * kx, (br.top() + margin) * ky, br.width() * kx, br.height() * ky)
+        col, ca = _glow_paint(lay, W, H, box)
+        a = a * ca
+    out = np.empty((H, W, 4), np.uint8)
+    out[..., :3] = col * a[..., None]  # premultiplied
+    out[..., 3] = (a * 255).astype(np.uint8)
+    img = QImage(out.data, W, H, W * 4, QImage.Format_RGBA8888_Premultiplied).copy()
     return img
+
+
+def _smooth(x):
+    """Пополам, но со стыком помягче: середина 30..70% — плавный переход."""
+    x = np.clip((x - 0.3) / 0.4, 0, 1)
+    return x * x * (3 - 2 * x)
+
+
+def _glow_paint(lay, W, H, box=None):
+    """Цвет свечения своей темы по пикселям: (H×W×3 RGB, H×W прозрачность 0..1).
+    box — где форма на картинке (x, y, ш, в): стороны «слева/справа/сверху/снизу» — её, а не всей картинки."""
+    kind, cols = lay
+    arr = np.array([[c.red(), c.green(), c.blue(), c.alpha() / 255] for c in cols], np.float32)
+    bx, by, bw, bh = box if box else (0, 0, W, H)
+    bw, bh = max(bw, 1.0), max(bh, 1.0)
+    fx = (np.arange(W, dtype=np.float32) + 0.5 - bx) / bw  # 0..1 поперёк формы (за краями — меньше 0 / больше 1)
+    fy = (np.arange(H, dtype=np.float32) + 0.5 - by) / bh
+    if kind in ("horizontal", "vertical"):
+        if kind == "horizontal":  # слева первый цвет, справа второй
+            t = _smooth(fx)[None, :, None]
+        else:                     # сверху первый, снизу второй
+            t = _smooth(fy)[:, None, None]
+        c = arr[0] * (1 - t) + arr[1] * t
+        c = np.broadcast_to(c, (H, W, 4))
+    else:  # крест: сверху, справа, снизу, слева — по углу от центра формы
+        ys = (fy * 2 - 1)[:, None]
+        xs = (fx * 2 - 1)[None, :]
+        ang = np.arctan2(ys, xs)  # 0 — справа, π/2 — снизу
+        wts = []
+        for base in (-np.pi / 2, 0.0, np.pi / 2, np.pi):  # сверху, справа, снизу, слева
+            wts.append(np.maximum(0, np.cos(ang - base)) ** 3)
+        wsum = sum(wts) + 1e-6
+        c = sum(wt[..., None] * arr[i] for i, wt in enumerate(wts)) / wsum[..., None]
+    return c[..., :3], c[..., 3]
 
 
 def glow_pen(rect, top, bottom, alpha, width=2.0):
@@ -293,6 +502,8 @@ def tint_brush(rect):
     t = current()["tint"]
     if not t:
         return None
+    if t[0] == "custom":
+        return qt_gradient(_custom["fill"], rect, FILL_MAX), 1.0
     if t[0] == "grad":
         g = QLinearGradient(rect.topLeft(), rect.bottomRight())
         g.setColorAt(0, QColor(t[1]))
@@ -309,6 +520,11 @@ def preview(skin_id):
     """Для карточки темы в каталоге: (цвет или пара цветов стекла, сила, кромка, свечение, акцент, акцент2, тёмная)."""
     s = SKINS[skin_id]
     t = s["tint"]
+    if skin_id == "custom":  # свою тему карточка рисует сама (градиенты, раскладка свечения) — здесь лишь цвета
+        c = _custom or custom_spec()
+        acc = _stops(c["accent"])
+        rim = _stops(c["rim"])
+        return None, 0.0, (rim[0][1], rim[-1][1]), None, acc[0][1], acc[-1][1], custom_dark(c)
     if t is None:
         tint, k = None, 0.0
     elif t[0] == "grad":

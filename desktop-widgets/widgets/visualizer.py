@@ -47,7 +47,7 @@ class VisualizerWidget(DesktopWidget):
         self.bmax = np.full(64, 0.2, np.float32)  # недавний максимум каждой полосы (выравнивание басов и верхов)
         self.last = time.monotonic()
         self.capturing = False
-        self.timer = QTimer(self, interval=16, timeout=self.tick, timerType=Qt.PreciseTimer)
+        self.timer = QTimer(self, interval=33, timeout=self.tick, timerType=Qt.PreciseTimer)
         self.track, self.artist, self.cover = "", "", None
         self._media_sig = None
         from widgets.player import Media
@@ -97,7 +97,9 @@ class VisualizerWidget(DesktopWidget):
         self.last = now
         self.step(spectrum.bands(n), dt)
         quiet = spectrum.silent() and float(self.levels.max()) < 0.01 and float(self.peaks.max()) < 0.01
-        self.timer.setInterval(250 if quiet else 16)  # тишина — почти не просыпаемся
+        # 30 кадров в секунду: каждый кадр — перерисовка прозрачного окна со стеклом, 60 стоили вдвое дороже,
+        # а на глаз полосы с плавным спадом выглядят так же; тишина — почти не просыпаемся
+        self.timer.setInterval(250 if quiet else 33)
         self.update()
 
     def step(self, raw, dt):

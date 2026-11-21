@@ -4,6 +4,7 @@ lyrics_cache.json
 *.tmp
 
 # Logs and caches / Журналы и служебное
+preview_cache/
 *.log
 __pycache__/
 *.pyc

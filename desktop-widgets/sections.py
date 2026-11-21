@@ -2,8 +2,9 @@
 
 Остров — отдельная программа со своим config.json (папка «остров» или «dynamic-island» рядом с виджетами).
 Раздел «Остров» правит этот файл, остров замечает изменение сам (следит за файлом) и сразу применяет.
-Раздел «Погода» — место и сайт погоды для виджетов «Погода», «Метеочасы» и «Солнце».
+Раздел «Погода» — место и сайт погоды для виджетов «Погода», «Метеочасы», «Солнце» и пилюли острова.
 Переключатели и сегменты — те же классы, что в каталоге (их передаёт main.py: тут их импортировать нельзя)."""
+import applog
 import json
 import os
 import threading
@@ -16,9 +17,23 @@ from PySide6.QtWidgets import (QAbstractButton, QFrame, QGraphicsOpacityEffect, 
                                QKeySequenceEdit, QLineEdit, QSizePolicy, QSlider, QVBoxLayout, QWidget)
 
 import skins
-from core import ROOT, activity, config, set_skin
+import theme_editor
+from core import ROOT, activity, config, set_custom, set_skin
 from lang import LANGS, tr
 
+
+
+def replace_retry(tmp, path):
+    """os.replace, но файл в этот миг может читать другая программа (виджеты ↔ остров) — Windows не даёт
+    его заменить, и раньше это роняло программу. Ждём и пробуем ещё; не вышло — правка не сохранится, но и не упадём."""
+    import time as _t
+    for attempt in range(8):
+        try:
+            os.replace(tmp, path)
+            return True
+        except PermissionError:
+            _t.sleep(0.03 * (attempt + 1))
+    return False
 
 def island_dir():
     """Папка острова рядом с виджетами (у себя — «остров», в публичной версии — «dynamic-island»)."""
@@ -36,12 +51,8 @@ RUN_NAME = "DynamicIsland"
 
 
 def island_running():
-    from PySide6.QtNetwork import QLocalSocket
-    probe = QLocalSocket()
-    probe.connectToServer(ISLAND_SERVER)
-    alive = probe.waitForConnected(150)
-    probe.abort()
-    return alive
+    import ipc
+    return ipc.alive(ISLAND_SERVER)  # без ожидания в главном потоке (см. ipc.py)
 
 
 def island_autostart(folder):
@@ -87,12 +98,8 @@ def set_island_program(folder, on):
             QProcess.startDetached(pyw, [main_py], folder)
         return
     open(stopped, "w").close()  # сторож виджетов не поднимет остров снова
-    sock = QLocalSocket()
-    sock.connectToServer(ISLAND_SERVER)
-    if sock.waitForConnected(300):
-        sock.write(b"quit")
-        sock.waitForBytesWritten(300)
-        sock.disconnectFromServer()
+    import ipc
+    ipc.send(ISLAND_SERVER, b"quit")
 
 
 class IslandConfig:
@@ -123,7 +130,7 @@ class IslandConfig:
         tmp = self.path + ".widgets.tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=1)
-        os.replace(tmp, self.path)
+        replace_retry(tmp, self.path)
 
 
 def set_active(w, on):
@@ -237,11 +244,20 @@ class IslandPage(QWidget):
         self.glass_rows = [self.acrylic, self.theme] + [s for s, _, _ in self.sliders.values()]
         lay.addWidget(card)
 
+        # ---- что показывать
+        card, grid = section_card(tr("Что показывать"))
+        row = 0
         self.shows = {}
-        self.agents_card(lay, Switch)
-
-        # ---- горячая клавиша
-        card, grid = section_card(tr("Горячая клавиша"))
+        for key, text, tip in (
+                ("weather_idle", tr("Погода"), tr("Маленькая пилюля с погодой слева от острова; клик — по часам.")),
+                ("calls", tr("Звонки"), tr("Discord, Telegram, Zoom…: время звонка, кто говорит, кнопка «сбросить».")),
+                ("notifications", tr("Уведомления"), tr("Telegram, Discord и другие: от кого и первая строка.")),
+                ("privacy", tr("Микрофон"), tr("Оранжевая точка, пока какая-то программа пишет с микрофона.")),
+                ("layout_toast", tr("Раскладка"), tr("Короткое «RU · Русский», когда меняешь язык ввода."))):
+            sw = Switch()
+            sw.toggled.connect(lambda on, k=key: self.put(k, bool(on)))
+            row = self.add_row(grid, row, text, sw, tip)
+            self.shows[key] = sw
         self.line = Switch()
         self.line.toggled.connect(lambda on: self.put("line", bool(on)))
         row = self.add_row(grid, row, tr("Линия"), self.line, tr("Свёрнутый остров — тонкая полоска вверху экрана. Смахни остров вверх — свернётся в линию, нажми на линию — раскроется. Звонки, уведомления и вопросы помощника всё равно показываются целиком."))
@@ -253,8 +269,9 @@ class IslandPage(QWidget):
                            tr("Спрятать / вернуть остров. Щёлкни по полю и нажми новое сочетание: Ctrl, Alt, Shift или Win и латинская буква, цифра или F1–F24."))
         hint = QLabel(tr("Сочетание не срабатывает — значит, оно занято другой программой: выбери другое."), objectName="dim", wordWrap=True)
         hint.setStyleSheet("font-size: 12px;")
-        grid.addWidget(hint, 0, 0, 1, 4)
+        grid.addWidget(hint, row, 0, 1, 4)
         lay.addWidget(card)
+        self.agents_card(lay, Switch)
         lay.addStretch()
         # остров сам тоже пишет в файл (вкл/выкл из трея) — пока раздел открыт, показываем свежее
         self.watch = QTimer(self, interval=1000, timeout=self.load)
@@ -482,7 +499,7 @@ class PlaceButton(QAbstractButton):
 
 
 class WeatherPage(QWidget):
-    """Место и сайт погоды — общие для виджетов погоды."""
+    """Место и сайт погоды — общие для виджетов погоды и пилюли острова."""
     found = Signal(object)
     fetched = Signal(object)
 
@@ -495,7 +512,8 @@ class WeatherPage(QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(12)
 
-        card, grid = section_card(tr("Место"), tr("Для виджетов «Погода», «Метеочасы» и «Солнце»."))
+        card, grid = section_card(tr("Место"), tr("Для виджетов «Погода», «Метеочасы», «Солнце» и пилюли погоды "
+                                                  "в острове."))
         self.now = QLabel("")
         self.now.setStyleSheet("font-size: 14px;")
         grid.addWidget(QLabel(tr("Сейчас")), 0, 0)
@@ -567,6 +585,7 @@ class WeatherPage(QWidget):
             try:
                 places = self.W.find_places(text)
             except Exception as ex:  # нет сети
+                applog.error("sections.search.work", ex)
                 places = tr("нет связи ({})").format(type(ex).__name__)
             try:
                 self.found.emit(places)
@@ -613,12 +632,13 @@ class WeatherPage(QWidget):
         self.load()
 
     def refresh_all(self):
-        """Виджеты погоды на столе — обновить."""
+        """Виджеты погоды на столе — обновить; сводку для острова — тоже, даже если виджета «Погода» на столе нет."""
         for w in activity.widgets():
             for name in ("refresh", "refresh_weather"):
                 if w.key in ("weather", "meteoclock", "sun", "air") and hasattr(w, name):
                     getattr(w, name)()
-        QTimer.singleShot(4000, self.load)
+        update_snapshot(lambda: self.fetched.emit(None))
+
 
 def update_snapshot(done=None):
     """Погода для острова без виджета: скачать для выбранного места и записать weather_now.json / weather_alert.json.
@@ -695,7 +715,17 @@ class ThemeCard(QAbstractButton):
         ox = box.left() + (box.width() - (self.W - 16)) / 2  # мини-виджет — по центру стекла любой ширины
         path = QPainterPath()
         path.addRoundedRect(box, 18, 18)
-        if glow is not None:  # свечение «Неона»
+        custom = self.skin_id == "custom"
+        spec = skins._custom or skins.custom_spec()
+        if custom and spec["glow"]:  # своя тема: свечение в её раскладке (слева/справа, сверху/снизу, крест)
+            M = 8  # ореол — в поле вокруг стекла (8 точек), на подпись снизу не заходит
+            shape = QPainterPath()
+            shape.addRoundedRect(QRectF(0, 0, box.width(), box.height()), 18, 18)
+            img = skins.glow_image(shape, box.width(), box.height(), M, None, None, strength=0.8, spread=3,
+                                   res=2 * p.device().devicePixelRatioF(), layout=skins.glow_layout(force=True))
+            p.drawImage(QRectF(box.left() - M, box.top() - M, box.width() + 2 * M, box.height() + 2 * M), img)
+            glow = (QColor(255, 255, 255), QColor(255, 255, 255))  # дальше — как у тем со свечением (кромка ярче)
+        elif glow is not None:  # свечение «Неона»
             p.setBrush(Qt.NoBrush)
             for i in range(5):
                 d = 1 + i * 1.4
@@ -717,15 +747,20 @@ class ThemeCard(QAbstractButton):
                 c = QColor(tint)
                 c.setAlphaF(min(1.0, k + 0.1))
                 p.fillPath(path, c)
+        if custom:
+            p.fillPath(path, skins.qt_gradient(spec["fill"], box, skins.FILL_MAX))
         sheen = QLinearGradient(box.topLeft(), box.bottomLeft())
         sheen.setColorAt(0, QColor(255, 255, 255, 22))
         sheen.setColorAt(0.4, QColor(255, 255, 255, 0))
         p.fillPath(path, sheen)
-        rg = QLinearGradient(box.topLeft(), box.bottomLeft())
-        for at, c in ((0, rim[0]), (1, rim[1])):
-            c = QColor(c)
-            c.setAlpha(240 if glow is not None else 150)
-            rg.setColorAt(at, c)
+        if custom:
+            rg = skins.qt_gradient(spec["rim"], box)
+        else:
+            rg = QLinearGradient(box.topLeft(), box.bottomLeft())
+            for at, c in ((0, rim[0]), (1, rim[1])):
+                c = QColor(c)
+                c.setAlpha(240 if glow is not None else 150)
+                rg.setColorAt(at, c)
         p.setPen(QPen(rg, 1.8 if glow is not None else 1.0))
         p.setBrush(Qt.NoBrush)
         p.drawPath(path)
@@ -787,7 +822,7 @@ class ThemeCard(QAbstractButton):
 class ThemesPage(QWidget):
     """Темы оформления: одна кнопка меняет стекло, кромку и акцент у всех виджетов, каталога и острова."""
 
-    def __init__(self):
+    def __init__(self, Segmented, PillButton):
         super().__init__()
         self.setAttribute(Qt.WA_TranslucentBackground)
         lay = QVBoxLayout(self)
@@ -817,15 +852,27 @@ class ThemesPage(QWidget):
             grid.setColumnStretch(col, 1)
         box.addLayout(grid)
         lay.addWidget(card)
+        # своя тема: редактор под сеткой — виден, когда выбрана «Кастомная»
+        self.editor = theme_editor.CustomThemeEditor(Segmented, PillButton, self.set_custom)
+        self.editor.load(config.section("app").get("custom_skin"))
+        lay.addWidget(self.editor)
+        self.editor.setVisible(skins.current_id() == "custom")
         lay.addStretch()
+
+    def set_custom(self, spec):
+        set_custom(spec)
+        for c in self.cards:
+            c.update()
 
     def choose(self, sid):
         if sid != skins.current_id():
             set_skin(sid)
         for c in self.cards:
             c.update()
+        self.editor.setVisible(sid == "custom")
 
     def showEvent(self, event):
         super().showEvent(event)
         for c in self.cards:  # тему могли сменить из меню виджета или трея
             c.update()
+        self.editor.setVisible(skins.current_id() == "custom")

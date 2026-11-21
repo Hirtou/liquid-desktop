@@ -287,7 +287,12 @@ user32.GetWindowThreadProcessId.argtypes = [wt.HWND, ctypes.POINTER(wt.DWORD)]
 
 DESKTOP_CLASSES = {"Progman", "WorkerW"}
 SHELL_CLASSES = {"Shell_TrayWnd", "Shell_SecondaryTrayWnd", "NotifyIconOverflowWindow",
-                 "TopLevelWindowForOverflowXamlIsland", "XamlExplorerHostIslandWindow"}
+                 "TopLevelWindowForOverflowXamlIsland", "XamlExplorerHostIslandWindow",
+                 # «Пуск», поиск, буфер Win+V, центр уведомлений — окна во весь монитор, но это не игра:
+                 # у тестера на каждое открытие виджеты уходили в игровой режим и обратно — мигали
+                 "Windows.UI.Core.CoreWindow", "ForegroundStaging", "MultitaskingViewFrame",
+                 # оверлеи поверх игр (NVIDIA Alt+Z, Steam) — прозрачные окна во весь экран
+                 "CEF-OSC-WIDGET", "SteamOverlayWindow"}
 
 
 def foreground_class():
@@ -329,7 +334,13 @@ def foreground():
         user32.GetWindowTextW(hwnd, buf2, 256)
         return "window" if buf2.value == tr("Виджеты") else "desktop"
     win, monitor = window_rect(hwnd)
-    return "fullscreen" if win == monitor else "window"
+    if win != monitor:
+        return "window"
+    # во весь монитор, но сквозь него кликают (прозрачный оверлей записи, FPS-счётчика) — это не игра
+    ex = user32.GetWindowLongW(hwnd, -20)  # GWL_EXSTYLE
+    if ex & 0x20 and ex & 0x80000:  # WS_EX_TRANSPARENT + WS_EX_LAYERED
+        return None
+    return "fullscreen"
 
 
 def _grab_parts(x, y, w, h, parts):

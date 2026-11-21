@@ -129,7 +129,7 @@ class Spectrum:
                     if self.users <= 0:
                         return
                 now = time.monotonic()
-                if now - checked > 2:  # сменилось устройство вывода (наушники/колонки) — новый сеанс
+                if now - checked > 5:  # сменилось устройство вывода (наушники/колонки) — новый сеанс
                     checked = now
                     cur = AudioUtilities.GetSpeakers()
                     if getattr(cur, "_dev", cur).GetId() != dev_id:

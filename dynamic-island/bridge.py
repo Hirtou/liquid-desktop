@@ -7,12 +7,28 @@ import json
 import os
 import time
 
+import ipc
+
 from PySide6.QtNetwork import QLocalSocket
 
 from lang import find_widgets_dir
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 SERVER = "DesktopWidgets-Liquid"  # окно-сервер виджетов (main.py виджетов)
+
+
+
+def replace_retry(tmp, path):
+    """os.replace, но файл в этот миг может читать другая программа (виджеты ↔ остров) — Windows не даёт
+    его заменить, и раньше это роняло программу. Ждём и пробуем ещё; не вышло — правка не сохранится, но и не упадём."""
+    import time as _t
+    for attempt in range(8):
+        try:
+            os.replace(tmp, path)
+            return True
+        except PermissionError:
+            _t.sleep(0.03 * (attempt + 1))
+    return False
 
 
 class Settings:
@@ -43,7 +59,7 @@ class Settings:
         tmp = self.path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(self.data, f, ensure_ascii=False, indent=1)
-        os.replace(tmp, self.path)
+        replace_retry(tmp, self.path)
         self.mtime = self._mtime()
 
     def _mtime(self):
@@ -99,13 +115,9 @@ class Widgets:
         now = time.monotonic()
         if now - self.alive_checked > 3:
             self.alive_checked = now
-            sock = QLocalSocket()
-            sock.connectToServer(SERVER)
-            self.alive = sock.waitForConnected(80)
-            if self.alive:
-                sock.write(b"ping")
-                sock.waitForBytesWritten(80)
-                sock.disconnectFromServer()
+            # раньше — подключение с waitForConnected/waitForBytesWritten в главном потоке: виджеты закрылись
+            # в этот миг — остров висел намертво, а с ним и перехват клавиш (ввод тормозил во всей системе)
+            self.alive = ipc.alive(SERVER)
         return self.alive
 
     def widget_open(self, key):
@@ -121,13 +133,8 @@ class Widgets:
             else:
                 sec[k] = v
         if self.running():
-            sock = QLocalSocket()
-            sock.connectToServer(SERVER)
-            if sock.waitForConnected(200):
-                sock.write(("cfg " + json.dumps({"section": name, "set": changes}, ensure_ascii=False)).encode())
-                sock.waitForBytesWritten(200)
-                sock.disconnectFromServer()
-                return
+            ipc.send(SERVER, "cfg " + json.dumps({"section": name, "set": changes}, ensure_ascii=False))
+            return
         try:
             with open(self.config_path, encoding="utf-8-sig") as f:
                 data = json.load(f)
@@ -142,7 +149,7 @@ class Widgets:
         tmp = self.config_path + ".island.tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=1)
-        os.replace(tmp, self.config_path)
+        replace_retry(tmp, self.config_path)
         self.cfg, self.cfg_mtime = data, os.path.getmtime(self.config_path)
 
     def weather_alert(self):

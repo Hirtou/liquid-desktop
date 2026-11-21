@@ -41,3 +41,16 @@ ALL = [PlayerWidget, LyricsWidget, VisualizerWidget, MeteoClockWidget, AnalogClo
        WeatherWidget, AirWidget, SunWidget, CalendarWidget, ProgressWidget, CountdownWidget, TimerWidget, StopwatchWidget, WaterWidget, HabitsWidget,
        TodoWidget, NotesWidget, ClipboardWidget, CalcWidget, ClaudeWidget, SystemWidget, ProcessesWidget, NetworkWidget, GpuWidget, PingWidget, VolumeWidget,
        CurrencyWidget, PhotoWidget, GifWidget, FocusWidget, BreatheWidget, DiceWidget, MoonWidget, QuickWidget, ToolsWidget]
+
+# виджеты, которых можно поставить несколько (свои фото, свои гифки): копия — тот же класс со своим ключом
+# («photo_2», «gif_3») и своим разделом настроек; список копий — config["app"]["copies"]
+COPYABLE = {PhotoWidget.key: PhotoWidget, GifWidget.key: GifWidget}
+_copies = {}
+
+
+def copy_class(base_key, n):
+    key = f"{base_key}_{n}"
+    if key not in _copies:
+        base = COPYABLE[base_key]
+        _copies[key] = type(f"{base.__name__}{n}", (base,), {"key": key, "title": f"{base.title} {n}", "copy_of": base_key})
+    return _copies[key]

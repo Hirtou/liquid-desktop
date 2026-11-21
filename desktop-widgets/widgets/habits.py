@@ -89,6 +89,8 @@ class HabitsWidget(DesktopWidget):
             self.update()
 
     def remove_item(self, i):
+        if not 0 <= i < len(self.cfg.get("items", [])):
+            return
         del self.cfg["items"][i]
         config.save()
         self.update()

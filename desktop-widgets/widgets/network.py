@@ -10,7 +10,12 @@ from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPainterPath
 from core import DesktopWidget, grid, open_uri
 
 DOWN = skins.ACCENT
-UP = QColor("#34c77b")
+UP_LIQUID = QColor("#34c77b")
+
+
+def up_color():
+    """Отдача: у Liquid — зелёная, как было; в остальных темах — вторым цветом темы (зелёная линия портила вид)."""
+    return UP_LIQUID if skins.current_id() == "liquid" else skins.ACCENT2
 SAMPLES = 60  # секунд на графике
 
 
@@ -73,7 +78,7 @@ class NetworkWidget(DesktopWidget):
             small = QFont("Segoe UI")
             small.setPixelSize(11)
             for i, (color, values, down, text) in enumerate(((DOWN, self.down, True, tr("загрузка")),
-                                                             (UP, self.up, False, tr("отдача")))):
+                                                             (up_color(), self.up, False, tr("отдача")))):
                 y = r.top() + 34 + i * 50
                 self._arrow(p, QPointF(r.left() + 7, y + 13), down, color)
                 p.setFont(big)
@@ -84,7 +89,7 @@ class NetworkWidget(DesktopWidget):
                 p.setPen(dim)
                 p.drawText(QRectF(r.left() + 22, y + 25, r.width() - 22, 14), Qt.AlignLeft | Qt.AlignVCenter, text)
             return
-        for i, (color, values, down) in enumerate(((DOWN, self.down, True), (UP, self.up, False))):
+        for i, (color, values, down) in enumerate(((DOWN, self.down, True), (up_color(), self.up, False))):
             x = r.left() + i * r.width() / 2
             y = r.top() + 30
             self._arrow(p, QPointF(x + 7, y + 11), down, color)
@@ -97,7 +102,7 @@ class NetworkWidget(DesktopWidget):
         peak = max(max(self.down), max(self.up), 1.0)
         p.setPen(QPen(dim, 1, Qt.DotLine))
         p.drawLine(g.bottomLeft(), g.bottomRight())
-        for color, values in ((UP, self.up), (DOWN, self.down)):
+        for color, values in ((up_color(), self.up), (DOWN, self.down)):
             pts = [QPointF(g.left() + g.width() * i / (SAMPLES - 1), g.bottom() - g.height() * v / peak * 0.95)
                    for i, v in enumerate(values)]
             line = QPainterPath(pts[0])
