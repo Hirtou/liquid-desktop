@@ -145,6 +145,7 @@ Your settings are saved to `config.json` inside each folder. They are personal a
 ### License
 
 [MIT](LICENSE) — free to use, change and share. Contributions and bug reports are welcome.
+Author: [Hirtou](https://github.com/Hirtou). If you share a copy or your own version, keep the [LICENSE](LICENSE) file with the author line.
 
 ---
 
@@ -248,6 +249,7 @@ Liquid Desktop — две небольшие программы с открыт�
 ### Лицензия
 
 [MIT](LICENSE) — можно свободно пользоваться, менять и делиться. Сообщения о багах и правки приветствуются.
+Автор: [Hirtou](https://github.com/Hirtou). Делаешь копию или свою версию — оставь файл [LICENSE](LICENSE) со строкой об авторе.
 
 <div align="center">
 

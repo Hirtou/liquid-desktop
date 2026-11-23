@@ -1,3 +1,4 @@
+# Liquid Desktop — © 2026 Hirtou (https://github.com/Hirtou) · MIT License
 """Динамический остров — отдельная программа (как док). Запуск: run.bat или pythonw main.py.
 
 Значок в трее: включить/выключить остров, запуск с Windows, выход. Вторая копия не запускается.

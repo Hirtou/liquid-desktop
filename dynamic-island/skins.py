@@ -1,3 +1,4 @@
+# Liquid Desktop — © 2026 Hirtou (https://github.com/Hirtou) · MIT License
 """Темы оформления: оттенок стекла, кромка, свечение и цвет акцента — для всех виджетов сразу.
 
 Тема хранится в config["app"]["skin"]. Цвета акцента — общие объекты QColor (ACCENT, ACCENT2): виджеты берут их
@@ -14,6 +15,34 @@ import numpy as np
 from PySide6.QtGui import QColor
 
 from lang import tr
+
+
+def _load_rust():
+    """Rust-модуль стекла (liquid_glass.*.pyd) с функцией glow. Лежит у виджетов; остров ищет его в соседней
+    папке виджетов. Нет модуля / старый без glow / LIQUID_NO_RUST=1 — свечение считает numpy, как раньше."""
+    if os.environ.get("LIQUID_NO_RUST"):
+        return None
+    import importlib
+    import sys
+    here = os.path.dirname(os.path.abspath(__file__))
+    for folder in (here, os.path.join(os.path.dirname(here), "виджеты"),
+                   os.path.join(os.path.dirname(here), "desktop-widgets")):
+        added = False
+        try:
+            if folder != here and folder not in sys.path and os.path.isdir(folder):
+                sys.path.append(folder)
+                added = True
+            mod = importlib.import_module("liquid_glass")
+            if hasattr(mod, "glow"):
+                return mod
+            return None
+        except Exception:
+            if added:
+                sys.path.remove(folder)
+    return None
+
+
+_rust = _load_rust()
 
 # id: название, подпись, оттенок стекла, размытие, замутнение, кромка (цвет, яркость 0..1, толщина),
 #     свечение вокруг карточки, акцент, второй акцент (светлее, для градиентов колец), тёмное стекло
@@ -48,7 +77,7 @@ ORDER = ["liquid", "night", "neon", "sunset", "sakura", "forest", "minimal", "au
 # Свечение: horizontal — слева один цвет, справа другой; vertical — сверху и снизу; cross — 4 цвета
 # (сверху, справа, снизу, слева).
 CUSTOM_DEFAULT = dict(
-    glow=True, layout="horizontal",
+    glow=True, layout="horizontal", glow_size=50,
     glow_colors=["#c8c8d2ff", "#8a8a96ff", "#c8c8d2ff", "#8a8a96ff"],
     fill=dict(kind="linear", angle=135, stops=[["#3a3a42d0", 0], ["#24242ad0", 100]]),
     rim=dict(kind="linear", angle=180, stops=[["#e6e6eeff", 0], ["#9a9aa6ff", 100]]),
@@ -68,6 +97,7 @@ def custom_spec(spec=None):
                 out[k] = copy.deepcopy(spec[k])
     if out["layout"] not in ("horizontal", "vertical", "cross"):
         out["layout"] = "horizontal"
+    out["glow_size"] = max(0, min(100, out["glow_size"]))
     while len(out["glow_colors"]) < 4:
         out["glow_colors"].append("#ffffffff")
     for key in ("fill", "rim", "accent"):
@@ -393,7 +423,19 @@ def _soft(a, r):
     return a
 
 
-def glow_image(path, w, h, margin, top, bottom, strength=0.55, spread=7, res=1.0, layout=None):
+def glow_scale(spec=None):
+    """«Размер свечения» своей темы (0..100, по умолчанию 50 — как было) -> (множитель ширины, множитель яркости).
+    spec — своя тема из редактора (превью); без него — текущая тема: не своя — (1, 1)."""
+    if spec is None:
+        if _current != "custom" or _custom is None:
+            return 1.0, 1.0
+        spec = _custom
+    s = max(0, min(100, spec.get("glow_size", 50) if isinstance(spec.get("glow_size", 50), int) else 50)) / 100
+    # ширина ×0.4…×1.6: больше — ореол упирается в поле тени вокруг карточки (18 px) и обрезается краем окна
+    return 0.4 + 1.2 * s, 0.6 + 0.8 * s
+
+
+def glow_image(path, w, h, margin, top, bottom, strength=0.55, spread=7, res=1.0, layout=None, scale=None):
     """Ореол неоновой трубки вокруг формы path (координаты 0..w, 0..h): кромка формы, размытая в мягкое свечение,
     раскрашенное сверху вниз (top -> bottom), без самой формы внутри. Картинка (w+2·margin)×(h+2·margin),
     форма — со сдвигом margin. Считается в половинном размере (быстро, ореол всё равно мягкий)."""
@@ -401,6 +443,8 @@ def glow_image(path, w, h, margin, top, bottom, strength=0.55, spread=7, res=1.0
     from PySide6.QtGui import QImage, QPainter, QPen
     import math
     k = 0.5 * res
+    sk, tk = scale or glow_scale()
+    spread, strength = spread * sk, min(1.0, strength * tk)
     # размер картинки — целые пиксели, а масштаб — ровно под них (kx, ky): при масштабе экрана 125% округление
     # растягивало ореол при выводе, и он получался «не по размеру и кривой» (Диар)
     W, H = max(1, math.ceil((w + 2 * margin) * k)), max(1, math.ceil((h + 2 * margin) * k))
@@ -415,9 +459,20 @@ def glow_image(path, w, h, margin, top, bottom, strength=0.55, spread=7, res=1.0
     p.setBrush(Qt.NoBrush)
     p.drawPath(path)
     p.end()
+    if _rust is not None:
+        img = _glow_rust(path, mask, W, H, kx, ky, margin, top, bottom, strength, spread, k, layout)
+        if img is not None:
+            return img
     a = np.frombuffer(mask.constBits(), np.uint8).reshape(H, mask.bytesPerLine())[:, :W].astype(np.float32) / 255
     a = _soft(a, max(1, int(spread * k)))
     a = np.clip(a / max(float(a.max()), 1e-6), 0, 1) ** 0.8 * strength
+    if margin > 0:  # к краю картинки (поле тени вокруг карточки) ореол сходит на нет: иначе широкий упирался
+        # в край окна и обрезался ровной линией
+        fw = max(1.0, margin * min(kx, ky) * 0.55)
+        ex = np.minimum(np.arange(W, dtype=np.float32), np.arange(W, dtype=np.float32)[::-1]) + 0.5
+        ey = np.minimum(np.arange(H, dtype=np.float32), np.arange(H, dtype=np.float32)[::-1]) + 0.5
+        f = np.clip(np.minimum(ey[:, None], ex[None, :]) / fw, 0, 1)
+        a *= f * f * (3 - 2 * f)
     # внутрь формы ореол не заходит: там стекло (иначе цвет ложится на текст)
     inside = QImage(W, H, QImage.Format_Alpha8)
     inside.fill(0)
@@ -449,6 +504,56 @@ def glow_image(path, w, h, margin, top, bottom, strength=0.55, spread=7, res=1.0
     out[..., 3] = (a * 255).astype(np.uint8)
     img = QImage(out.data, W, H, W * 4, QImage.Format_RGBA8888_Premultiplied).copy()
     return img
+
+
+def _inside_mask(path, W, H, kx, ky, margin):
+    from PySide6.QtCore import QPointF, Qt
+    from PySide6.QtGui import QImage, QPainter
+    inside = QImage(W, H, QImage.Format_Alpha8)
+    inside.fill(0)
+    p = QPainter(inside)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.scale(kx, ky)
+    p.translate(QPointF(margin, margin))
+    p.setPen(Qt.NoPen)
+    p.setBrush(Qt.white)
+    p.drawPath(path)
+    p.end()
+    return inside
+
+
+def _glow_rust(path, mask, W, H, kx, ky, margin, top, bottom, strength, spread, k, layout):
+    """То же, что numpy-ветка glow_image (числа совпадают до единицы яркости), но размытие, затухание и раскраска —
+    в Rust, без GIL. Ошибка — None: досчитает numpy."""
+    global _rust
+    from PySide6.QtGui import QImage
+    try:
+        inside = _inside_mask(path, W, H, kx, ky, margin)
+        m = np.frombuffer(mask.constBits(), np.uint8).reshape(H, mask.bytesPerLine())[:, :W]
+        ins = np.frombuffer(inside.constBits(), np.uint8).reshape(H, inside.bytesPerLine())[:, :W]
+        fw = max(1.0, margin * min(kx, ky) * 0.55) if margin > 0 else 0.0
+        lay = layout or glow_layout()
+        if lay is None:
+            cols = np.array([[top.red(), top.green(), top.blue(), 1.0],
+                             [bottom.red(), bottom.green(), bottom.blue(), 1.0]], np.float32)
+            kind, box = 0, (0.0, 0.0, 1.0, 1.0)
+        else:
+            kind = {"horizontal": 1, "vertical": 2}.get(lay[0], 3)
+            cols = np.array([[c.red(), c.green(), c.blue(), c.alpha() / 255] for c in lay[1]], np.float32)
+            br = path.boundingRect()
+            box = ((br.left() + margin) * kx, (br.top() + margin) * ky, max(br.width() * kx, 1.0),
+                   max(br.height() * ky, 1.0))
+        out = _rust.glow(np.ascontiguousarray(m), np.ascontiguousarray(ins), max(1, int(spread * k)), float(strength),
+                         float(fw), kind, cols, *(float(v) for v in box))
+        return QImage(out.data, W, H, W * 4, QImage.Format_RGBA8888_Premultiplied).copy()
+    except Exception as err:
+        _rust = None  # один раз сломалось — дальше numpy, без повторных ошибок на каждом кадре
+        try:
+            import applog
+            applog.error("skins.glow (Rust)", err)
+        except Exception:
+            pass
+        return None
 
 
 def _smooth(x):

@@ -1,3 +1,4 @@
+# Liquid Desktop — © 2026 Hirtou (https://github.com/Hirtou) · MIT License
 """Общее для всех виджетов: настройки (config.json) и окно-виджет на рабочем столе."""
 import applog
 import skins

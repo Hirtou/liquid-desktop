@@ -10,10 +10,11 @@
 [Setup]
 AppId={{8F3B2C61-4E0A-4B7D-9A55-6C1E2D7F4A10}
 AppName=Liquid Desktop
-AppVersion=0.4.2 alpha ({#Build})
-AppVerName=Liquid Desktop 0.4.2 alpha
+AppVersion=0.4.3 alpha ({#Build})
+AppVerName=Liquid Desktop 0.4.3 alpha
 AppPublisher=Hirtou
 AppPublisherURL=https://github.com/Hirtou/liquid-desktop
+AppCopyright=(c) 2026 Hirtou - https://github.com/Hirtou
 AppSupportURL=https://github.com/Hirtou/liquid-desktop/issues
 AppUpdatesURL=https://github.com/Hirtou/liquid-desktop/releases
 DefaultDirName={localappdata}\Programs\LiquidDesktop
@@ -83,6 +84,7 @@ Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\dynamic-island\main.p
 [UninstallRun]
 Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\desktop-widgets\claude_connect.py"" --disconnect"; Flags: runhidden waituntilterminated; RunOnceId: "ClaudeHooks"
 Filename: "powershell.exe"; Parameters: "-NoProfile -Command ""Get-Process pythonw,python -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -like '{app}\*' } | Stop-Process -Force"""; Flags: runhidden; RunOnceId: "StopApps"
+Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\desktop-widgets\folder_release.py"""; WorkingDir: "{app}\desktop-widgets"; Flags: runhidden waituntilterminated; RunOnceId: "FolderRelease"
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\desktop-widgets\__pycache__"

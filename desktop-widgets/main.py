@@ -1,3 +1,4 @@
+# Liquid Desktop — © 2026 Hirtou (https://github.com/Hirtou) · MIT License
 """Каталог виджетов: стеклянное окно (Liquid Acrylic), включает/выключает виджеты, живёт в трее."""
 from lang import LANG, LANGS, tr
 import os
@@ -1542,6 +1543,9 @@ class Catalog(DesktopWidget):
         copies[base] = [n for n in copies[base] if f"{base}_{n}" != key]
         config.section("app")["copies"] = {b: v for b, v in copies.items() if v}
         config.section(key)["visible"] = False
+        cls = widgets.COPYABLE.get(base)
+        if hasattr(cls, "release_cfg"):  # папка: перенесённые со стола ярлыки — обратно на стол, не в никуда
+            cls.release_cfg(config.section(key))
         w = self.instances.get(key)
         if w is not None:
             w.close()
@@ -1666,7 +1670,12 @@ class SetWindow(DesktopWidget):
     TEXTS = {"photo": (tr("Фото"), tr("Каждая фоторамка — отдельный виджет: свои фото, размер и место"),
                        tr("Добавить фоторамку"), tr("Ещё один виджет со своими фото")),
              "gif": (tr("Гифки"), tr("Каждая гифка — отдельный виджет: свои гифки, размер и место"),
-                     tr("Добавить гифку"), tr("Ещё один виджет со своими гифками"))}
+                     tr("Добавить гифку"), tr("Ещё один виджет со своими гифками")),
+             "folder": (tr("Папки"), tr("Каждая папка — отдельный виджет: свои ярлыки, размер и место"),
+                        tr("Добавить папку"), tr("Ещё одна папка со своими ярлыками"))}
+    HINTS = {"photo": tr("Правый клик по виджету на столе — его фото, интервал и «Листать: кликом или свайпом»"),
+             "gif": tr("Правый клик по виджету на столе — его гифки, интервал и «Листать: кликом или свайпом»"),
+             "folder": tr("Перетащи ярлыки и файлы на папку на столе; правый клик — размер, название, добавить")}
 
     def __init__(self, catalog, base):
         super().__init__()
@@ -1703,10 +1712,7 @@ class SetWindow(DesktopWidget):
         self.scroll.viewport().setAutoFillBackground(False)
         self.scroll.setFixedWidth(3 * 256 - 12 + 6 + 10)
         lay.addWidget(self.scroll)
-        hint = QLabel(tr("Правый клик по виджету на столе — его фото, интервал и «Листать: кликом или свайпом»")
-                      if base == "photo" else
-                      tr("Правый клик по виджету на столе — его гифки, интервал и «Листать: кликом или свайпом»"),
-                      objectName="dim")
+        hint = QLabel(self.HINTS[base], objectName="dim")
         hint.setStyleSheet("font-size: 12px;")
         lay.addWidget(hint)
         _, _, add_title, add_text = self.TEXTS[base]

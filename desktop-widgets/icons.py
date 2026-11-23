@@ -182,7 +182,7 @@ TILES = {
     "meteoclock": ("#3B4152", "#1E2230"), "clock": ("#5B8CFF", "#2F5BEA"), "analog": ("#F2F4F8", "#C9D0DC"),
     "system": ("#36C08E", "#159A6B"), "notes": ("#FFD25E", "#F5A623"), "weather": ("#5AB8FF", "#2C7BEA"),
     "calendar": ("#FFFFFF", "#E7EAF0"), "network": ("#8A6CFF", "#5B3FE0"), "photo": ("#FF8A7A", "#E5486B"),
-    "gif": ("#B58CFF", "#6D3FE0"),
+    "gif": ("#B58CFF", "#6D3FE0"), "folder": ("#5AC8FA", "#2F7BEA"),
     "timer": ("#FF8F5A", "#F2542D"), "todo": ("#4CD3A5", "#1FA37A"), "worldclock": ("#3EC7E0", "#1F86C9"),
     "sun": ("#FFB547", "#FF7A2F"), "currency": ("#5ED39B", "#22A06B"), "player": ("#2A2D36", "#121318"),
     "claude": ("#F4EEE6", "#E6DCCF"), "countdown": ("#FF8A5C", "#E5486B"), "water": ("#36D1FF", "#2F6BFF"),
@@ -431,6 +431,13 @@ def _tile_glyph(p, name):
         p.drawPath(path)
         p.setBrush(QColor("#FFC93C"))
         p.drawEllipse(QPointF(64, 38), 6, 6)
+    elif name == "folder":  # папка как на телефоне: светлая плашка с четырьмя «значками»
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(255, 255, 255, 70))
+        p.drawRoundedRect(QRectF(20, 20, 60, 60), 16, 16)
+        for i, c in enumerate(("#FFFFFF", "#FFD25E", "#FF8A7A", "#7CF0B8")):
+            p.setBrush(QColor(c))
+            p.drawRoundedRect(QRectF(28 + (i % 2) * 24, 28 + (i // 2) * 24, 20, 20), 6, 6)
     elif name == "progress":  # три полоски разной длины
         for i, w in enumerate((46, 30, 54)):
             p.setPen(Qt.NoPen)

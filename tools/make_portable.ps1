@@ -48,10 +48,10 @@ Get-ChildItem (Join-Path $Py "Lib\site-packages") -Directory -Filter "bin" | Rem
 # QML не используется, а его отладочные .obj дают слишком длинные пути при установке
 Remove-Item -Recurse -Force (Join-Path $Py "Lib\site-packages\PySide6\qml") -ErrorAction SilentlyContinue
 
-# 3. The apps — only files tracked by git (no personal configs or logs)
-#    Программы — только файлы из git (без личных настроек и журналов)
+# 3. The apps — files tracked by git plus new not-yet-committed ones, minus .gitignore (no personal configs or logs)
+#    Программы — файлы из git и новые, ещё не закоммиченные, кроме .gitignore (без личных настроек и журналов)
 Push-Location $Repo
-foreach ($f in (git ls-files desktop-widgets dynamic-island LICENSE README.md)) {
+foreach ($f in (git ls-files --cached --others --exclude-standard desktop-widgets dynamic-island LICENSE README.md)) {
     $dst = Join-Path $Out $f
     New-Item -ItemType Directory -Force (Split-Path $dst) | Out-Null
     Copy-Item (Join-Path $Repo $f) $dst

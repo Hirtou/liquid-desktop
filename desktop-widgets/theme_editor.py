@@ -11,7 +11,7 @@ from PySide6.QtGui import (QColor, QConicalGradient, QCursor, QGuiApplication, Q
                            QLinearGradient, QPainter, QPainterPath, QPen, QPixmap, QRadialGradient,
                            QRegularExpressionValidator)
 from PySide6.QtCore import QRegularExpression
-from PySide6.QtWidgets import (QAbstractButton, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QVBoxLayout,
+from PySide6.QtWidgets import (QAbstractButton, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QSlider, QVBoxLayout,
                                QWidget)
 
 import skins
@@ -558,7 +558,7 @@ def draw_mini(p, box, spec, glow_res=1.0, big=False):
         shape = QPainterPath()
         shape.addRoundedRect(QRectF(0, 0, box.width(), box.height()), r, r)
         img = skins.glow_image(shape, box.width(), box.height(), M, None, None, strength=0.8,
-                               spread=7 if big else 3, res=glow_res, layout=lay)
+                               spread=7 if big else 3, res=glow_res, layout=lay, scale=skins.glow_scale(spec))
         p.drawImage(QRectF(box.left() - M, box.top() - M, box.width() + 2 * M, box.height() + 2 * M), img)
     dark = skins.custom_dark(spec)
     p.fillPath(path, QColor(18, 19, 26, 200) if dark else QColor(40, 44, 54, 150))
@@ -742,6 +742,25 @@ class CustomThemeEditor(QFrame):
                                      ("cross", tr("Крест"))], "horizontal")
         self.layout_seg.changed.connect(self._layout)
         side.addWidget(self.layout_seg, 0, Qt.AlignLeft)
+        # размер ореола: уже/слабее — шире/ярче (у виджетов, острова и превью одинаково)
+        self.size_row = QWidget()
+        sr = QHBoxLayout(self.size_row)
+        sr.setContentsMargins(0, 2, 0, 0)
+        sr.setSpacing(10)
+        size_lbl = QLabel(tr("Размер свечения"), objectName="dim")
+        size_lbl.setStyleSheet("font-size: 12px;")
+        self.glow_size = QSlider(Qt.Horizontal, minimum=0, maximum=100, singleStep=5, pageStep=10)
+        self.glow_size.setFixedWidth(200)
+        self.glow_size.setToolTip(tr("Меньше — тонкий ореол у самой кромки, больше — широкое яркое свечение"))
+        self.glow_size_val = QLabel("", objectName="dim")
+        self.glow_size_val.setStyleSheet("font-size: 12px;")
+        self.glow_size_val.setFixedWidth(40)
+        self.glow_size.valueChanged.connect(self._glow_size)
+        sr.addWidget(size_lbl)
+        sr.addWidget(self.glow_size)
+        sr.addWidget(self.glow_size_val)
+        sr.addStretch()
+        side.addWidget(self.size_row)
         side.addSpacing(4)
         side.addWidget(_caption(tr("Что красим")))
         tiles = QHBoxLayout()
@@ -947,6 +966,10 @@ class CustomThemeEditor(QFrame):
         self.layout_seg.set_quiet(self.spec["layout"])
         self.layout_lbl.setVisible(glow)
         self.layout_seg.setVisible(glow)
+        self.size_row.setVisible(glow)
+        if self.glow_size.value() != self.spec["glow_size"]:
+            self.glow_size.setValue(self.spec["glow_size"])
+        self.glow_size_val.setText(f"{self.spec['glow_size']}%")
         if not glow and self.target == "glow":
             self.target = "fill"
         for k, t in self.tiles.items():
@@ -1047,6 +1070,12 @@ class CustomThemeEditor(QFrame):
         self.spec["glow"] = m == "glow"
         self._changed()
         self._sync()
+
+    def _glow_size(self, v):
+        if self._busy:
+            return
+        self.spec["glow_size"] = int(v)
+        self._changed()
 
     def _layout(self, lay):
         self.spec["layout"] = lay

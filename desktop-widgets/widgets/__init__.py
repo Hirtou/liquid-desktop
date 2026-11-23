@@ -26,6 +26,7 @@ from widgets.meteoclock import MeteoClockWidget
 from widgets.network import NetworkWidget
 from widgets.notes import NotesWidget
 from widgets.photo import PhotoWidget
+from widgets.folder import FolderWidget
 from widgets.gif import GifWidget
 from widgets.player import PlayerWidget
 from widgets.sun import SunWidget
@@ -40,11 +41,11 @@ from widgets.worldclock import WorldClockWidget
 ALL = [PlayerWidget, LyricsWidget, VisualizerWidget, MeteoClockWidget, AnalogClockWidget, ClockWidget, WorldClockWidget,
        WeatherWidget, AirWidget, SunWidget, CalendarWidget, ProgressWidget, CountdownWidget, TimerWidget, StopwatchWidget, WaterWidget, HabitsWidget,
        TodoWidget, NotesWidget, ClipboardWidget, CalcWidget, ClaudeWidget, SystemWidget, ProcessesWidget, NetworkWidget, GpuWidget, PingWidget, VolumeWidget,
-       CurrencyWidget, PhotoWidget, GifWidget, FocusWidget, BreatheWidget, DiceWidget, MoonWidget, QuickWidget, ToolsWidget]
+       CurrencyWidget, PhotoWidget, GifWidget, FolderWidget, FocusWidget, BreatheWidget, DiceWidget, MoonWidget, QuickWidget, ToolsWidget]
 
 # виджеты, которых можно поставить несколько (свои фото, свои гифки): копия — тот же класс со своим ключом
 # («photo_2», «gif_3») и своим разделом настроек; список копий — config["app"]["copies"]
-COPYABLE = {PhotoWidget.key: PhotoWidget, GifWidget.key: GifWidget}
+COPYABLE = {PhotoWidget.key: PhotoWidget, GifWidget.key: GifWidget, FolderWidget.key: FolderWidget}
 _copies = {}
 
 
