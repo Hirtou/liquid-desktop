@@ -3,11 +3,12 @@
 //! Повторяет glass.py один в один (те же формулы, тот же порядок действий в f32):
 //!   blur_lum — размытие уменьшенного снимка (три box-размытия ≈ гаусс, края — копия крайнего ряда) + яркость;
 //!   tone     — цвет акрила: насыщенность и молочная/дымчатая подмесь;
-//!   finish   — один проход вместо четырёх: середина + преломление у края + свет + оттенок темы + прозрачность.
+//!   finish   — один проход вместо четырёх: середина + преломление у края + свет + оттенок темы + прозрачность;
+//!   glow     — ореол темы (skins.glow_image): размытая кромка, затухание к краю, раскраска, premultiplied RGBA.
 //! Все функции отпускают GIL на время счёта: интерфейс не ждёт, пока считается стекло.
 
 use numpy::ndarray::Array3;
-use numpy::{IntoPyArray, PyArray3, PyReadonlyArray1, PyReadonlyArray3};
+use numpy::{IntoPyArray, PyArray3, PyReadonlyArray1, PyReadonlyArray2, PyReadonlyArray3};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
@@ -208,11 +209,191 @@ fn finish<'py>(
     Ok(arr.into_pyarray(py))
 }
 
+/// Мягкое размытие маски, как skins._soft: края — нули (не копия!), накопленная сумма в f32, разность через 2r+1.
+/// Обе оси идут по памяти подряд: по столбцам (axis 0) накопленные суммы — целыми строками (тот же порядок
+/// сложений в каждом столбце, что у np.cumsum, — числа те же), по строкам (axis 1) — внутри строки.
+fn soft_axis(a: &[f32], rows: usize, cols: usize, r: usize, axis: usize, out: &mut [f32], c: &mut Vec<f32>) {
+    let d = (2 * r + 1) as f32;
+    if axis == 0 {
+        let n = rows;
+        let total = n + 2 * r + 1;
+        c.clear();
+        c.resize(total * cols, 0.0);
+        for k in 0..total {
+            let i = k as isize - (r as isize + 1);
+            let (prev, cur) = if k == 0 { (None, 0) } else { (Some((k - 1) * cols), k * cols) };
+            for x in 0..cols {
+                let v = if i >= 0 && (i as usize) < n { a[i as usize * cols + x] } else { 0.0 };
+                c[cur + x] = match prev { Some(pr) => c[pr + x] + v, None => v };
+            }
+        }
+        for i in 0..n {
+            let (hi, lo) = ((i + 2 * r + 1) * cols, i * cols);
+            for x in 0..cols {
+                out[i * cols + x] = (c[hi + x] - c[lo + x]) / d;
+            }
+        }
+    } else {
+        let n = cols;
+        c.clear();
+        c.resize(n + 2 * r + 1, 0.0);
+        for line in 0..rows {
+            let row = &a[line * cols..(line + 1) * cols];
+            let mut acc = 0.0f32;
+            for k in 0..(n + 2 * r + 1) {
+                let i = k as isize - (r as isize + 1);
+                if i >= 0 && (i as usize) < n {
+                    acc += row[i as usize];
+                } else {
+                    acc += 0.0;
+                }
+                c[k] = acc;
+            }
+            for i in 0..n {
+                out[line * cols + i] = (c[i + 2 * r + 1] - c[i]) / d;
+            }
+        }
+    }
+}
+
+const POW_N: usize = 65536;
+
+/// x^0.8 таблицей (65 537 точек, между ними — прямая): powf из libm на каждый пиксель был главным расходом glow.
+/// Отличие от точного — меньше 1e-5, на яркости 0..255 не видно.
+fn pow08() -> &'static [f32] {
+    static LUT: std::sync::OnceLock<Vec<f32>> = std::sync::OnceLock::new();
+    LUT.get_or_init(|| (0..=POW_N).map(|i| ((i as f64) / POW_N as f64).powf(0.8) as f32).collect())
+}
+
+fn smooth(x: f32) -> f32 {
+    let x = ((x - 0.3) / 0.4).clamp(0.0, 1.0);
+    x * x * (3.0 - 2.0 * x)
+}
+
+/// Ореол темы: маска кромки (u8) -> размытие -> нормировка, ^0.8, сила -> затухание к краю картинки ->
+/// не заходит внутрь формы -> цвет. kind: 0 — сверху вниз двумя цветами (Неон), 1 — слева/справа, 2 — сверху/снизу,
+/// 3 — крест (своя тема: у неё цвет несёт и прозрачность). bx..bh — где форма на картинке (для 1–3).
+#[pyfunction]
+#[pyo3(signature = (mask, inside, r, strength, fade_w, kind, colors, bx, by, bw, bh))]
+#[allow(clippy::too_many_arguments)]
+fn glow<'py>(
+    py: Python<'py>, mask: PyReadonlyArray2<'py, u8>, inside: PyReadonlyArray2<'py, u8>, r: usize, strength: f32,
+    fade_w: f32, kind: u8, colors: PyReadonlyArray2<'py, f32>, bx: f32, by: f32, bw: f32, bh: f32,
+) -> PyResult<Bound<'py, PyArray3<u8>>> {
+    let m = mask.as_array();
+    let (h, w) = m.dim();
+    if inside.as_array().dim() != (h, w) || h == 0 || w == 0 {
+        return Err(PyValueError::new_err("маски разного размера"));
+    }
+    let cols_arr = colors.as_array();
+    let need = if kind == 3 { 4 } else { 2 };
+    if cols_arr.dim().0 < need || cols_arr.dim().1 != 4 {
+        return Err(PyValueError::new_err("мало цветов свечения"));
+    }
+    let pal: Vec<[f32; 4]> = (0..cols_arr.dim().0)
+        .map(|i| [cols_arr[[i, 0]], cols_arr[[i, 1]], cols_arr[[i, 2]], cols_arr[[i, 3]]])
+        .collect();
+    let mk: Vec<u8> = m.iter().copied().collect();
+    let ins: Vec<u8> = inside.as_array().iter().copied().collect();
+    let out = py.allow_threads(move || {
+        let mut a: Vec<f32> = mk.iter().map(|&v| v as f32 / 255.0).collect();
+        let mut tmp = vec![0.0f32; a.len()];
+        let mut c = Vec::new();
+        for _ in 0..3 {
+            soft_axis(&a, h, w, r, 0, &mut tmp, &mut c);
+            soft_axis(&tmp, h, w, r, 1, &mut a, &mut c);
+        }
+        let mx = a.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let mx = (mx as f64).max(1e-6) as f32;
+        let lut = pow08();
+        for v in a.iter_mut() {
+            let x = (*v / mx).clamp(0.0, 1.0) * POW_N as f32;
+            let i = (x as usize).min(POW_N - 1);
+            let f = x - i as f32;
+            *v = (lut[i] + (lut[i + 1] - lut[i]) * f) * strength;
+        }
+        if fade_w > 0.0 {
+            for y in 0..h {
+                let ey = (y.min(h - 1 - y)) as f32 + 0.5;
+                for x in 0..w {
+                    let ex = (x.min(w - 1 - x)) as f32 + 0.5;
+                    let f = (ey.min(ex) / fade_w).clamp(0.0, 1.0);
+                    a[y * w + x] *= f * f * (3.0 - 2.0 * f);
+                }
+            }
+        }
+        for (v, &i) in a.iter_mut().zip(ins.iter()) {
+            *v *= 1.0 - i as f32 / 255.0;
+        }
+        let mut out = vec![0u8; h * w * 4];
+        let fx: Vec<f32> = (0..w).map(|x| (x as f32 + 0.5 - bx) / bw).collect();
+        let fy: Vec<f32> = (0..h).map(|y| (y as f32 + 0.5 - by) / bh).collect();
+        for y in 0..h {
+            let t_row = if h > 1 { (y as f64 / (h - 1) as f64) as f32 } else { 0.0 };
+            for x in 0..w {
+                let mut al = a[y * w + x];
+                let col: [f32; 3];
+                match kind {
+                    0 => {
+                        let (c0, c1) = (pal[0], pal[1]);
+                        col = [c0[0] * (1.0 - t_row) + c1[0] * t_row, c0[1] * (1.0 - t_row) + c1[1] * t_row,
+                               c0[2] * (1.0 - t_row) + c1[2] * t_row];
+                    }
+                    1 | 2 => {
+                        let t = if kind == 1 { smooth(fx[x]) } else { smooth(fy[y]) };
+                        let mut cc = [0.0f32; 4];
+                        for k in 0..4 {
+                            cc[k] = pal[0][k] * (1.0 - t) + pal[1][k] * t;
+                        }
+                        col = [cc[0], cc[1], cc[2]];
+                        al *= cc[3];
+                    }
+                    _ => {
+                        // cos(угол − сторона) без тригонометрии: угол = atan2(ys, xs), значит cos = xs/r, sin = ys/r;
+                        // стороны −π/2, 0, π/2, π дают −sin, cos, sin, −cos (в точке 0,0 — угол 0, как у atan2)
+                        let ys = fy[y] * 2.0 - 1.0;
+                        let xs = fx[x] * 2.0 - 1.0;
+                        let rr = (xs * xs + ys * ys).sqrt();
+                        let (cs, sn) = if rr > 0.0 { (xs / rr, ys / rr) } else { (1.0, 0.0) };
+                        let mut wsum = 0.0f32;
+                        let mut wts = [0.0f32; 4];
+                        for (i, v) in [-sn, cs, sn, -cs].iter().enumerate() {
+                            wts[i] = v.max(0.0).powi(3);
+                            wsum += wts[i];
+                        }
+                        wsum += 1e-6;
+                        let mut cc = [0.0f32; 4];
+                        for k in 0..4 {
+                            let mut s = 0.0f32;
+                            for i in 0..4 {
+                                s += wts[i] * pal[i][k];
+                            }
+                            cc[k] = s / wsum;
+                        }
+                        col = [cc[0], cc[1], cc[2]];
+                        al *= cc[3];
+                    }
+                }
+                let o = (y * w + x) * 4;
+                for k in 0..3 {
+                    out[o + k] = (col[k] * al) as u8; // как присвоение float -> uint8 в numpy (дробь отбрасывается)
+                }
+                out[o + 3] = (al * 255.0) as u8;
+            }
+        }
+        out
+    });
+    let arr = Array3::from_shape_vec((h, w, 4), out).map_err(|e| PyValueError::new_err(e.to_string()))?;
+    Ok(arr.into_pyarray(py))
+}
+
+
 #[pymodule]
 fn liquid_glass(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(blur_lum, m)?)?;
     m.add_function(wrap_pyfunction!(tone, m)?)?;
     m.add_function(wrap_pyfunction!(finish, m)?)?;
+    m.add_function(wrap_pyfunction!(glow, m)?)?;
     m.add("VERSION", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }

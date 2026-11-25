@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (QAbstractButton, QFrame, QGraphicsOpacityEffect, 
 
 import skins
 import theme_editor
-from core import ROOT, activity, config, set_custom, set_skin
+from core import ROOT, activity, config, set_custom, set_glow_size, set_skin
 from lang import LANGS, tr
 
 
@@ -851,6 +851,25 @@ class ThemesPage(QWidget):
         for col in range(4):
             grid.setColumnStretch(col, 1)
         box.addLayout(grid)
+        # размер свечения у встроенных тем со свечением («Неон»); у своей темы такой же ползунок — в редакторе
+        self.glow_row = QWidget()
+        gr = QHBoxLayout(self.glow_row)
+        gr.setContentsMargins(0, 6, 0, 0)
+        gr.setSpacing(10)
+        glow_lbl = QLabel(tr("Размер свечения"), objectName="dim")
+        glow_lbl.setStyleSheet("font-size: 12px;")
+        self.glow_size = QSlider(Qt.Horizontal, minimum=0, maximum=100, singleStep=5, pageStep=10)
+        self.glow_size.setFixedWidth(200)
+        self.glow_size.setToolTip(tr("Меньше — тонкий ореол у самой кромки, больше — широкое яркое свечение"))
+        self.glow_size_val = QLabel("", objectName="dim")
+        self.glow_size_val.setStyleSheet("font-size: 12px;")
+        self.glow_size_val.setFixedWidth(40)
+        self.glow_size.valueChanged.connect(self._glow_size)
+        gr.addWidget(glow_lbl)
+        gr.addWidget(self.glow_size)
+        gr.addWidget(self.glow_size_val)
+        gr.addStretch()
+        box.addWidget(self.glow_row)
         lay.addWidget(card)
         # своя тема: редактор под сеткой — виден, когда выбрана «Кастомная»
         self.editor = theme_editor.CustomThemeEditor(Segmented, PillButton, self.set_custom)
@@ -858,6 +877,25 @@ class ThemesPage(QWidget):
         lay.addWidget(self.editor)
         self.editor.setVisible(skins.current_id() == "custom")
         lay.addStretch()
+        self.sync_glow()
+
+    def sync_glow(self):
+        """Ползунок свечения — только у встроенной темы со свечением, со значением именно этой темы."""
+        sid = skins.current_id()
+        show = sid != "custom" and skins.has_glow(sid)
+        self.glow_row.setVisible(show)
+        if show:
+            v = skins.glow_size_of(config.section("app"), sid)
+            self.glow_size.blockSignals(True)
+            self.glow_size.setValue(v)
+            self.glow_size.blockSignals(False)
+            self.glow_size_val.setText(f"{v}%")
+
+    def _glow_size(self, v):
+        self.glow_size_val.setText(f"{v}%")
+        set_glow_size(skins.current_id(), v)
+        for c in self.cards:
+            c.update()
 
     def set_custom(self, spec):
         set_custom(spec)
@@ -870,9 +908,344 @@ class ThemesPage(QWidget):
         for c in self.cards:
             c.update()
         self.editor.setVisible(sid == "custom")
+        self.sync_glow()
 
     def showEvent(self, event):
         super().showEvent(event)
         for c in self.cards:  # тему могли сменить из меню виджета или трея
             c.update()
         self.editor.setVisible(skins.current_id() == "custom")
+        self.sync_glow()
+
+
+# ---------------------------------------------------------------- моды
+
+def _lang_en():
+    import lang
+    return lang.LANG == "en"
+
+
+def _esc(s):
+    return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("'", "&#39;")
+
+
+class ModRow(QFrame):
+    """Один мод в списке: значок, название и версия, автор, описание, кнопки и переключатель."""
+
+    def __init__(self, page, Switch, PillButton, e, inst, online):
+        super().__init__()
+        import icons
+        import mods
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        mid = e["id"]
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 8, 0, 8)
+        lay.setSpacing(14)
+        key = f"mod_{mid}"
+        if e.get("tile"):
+            icons.TILES.setdefault(key, tuple(e["tile"]))
+        icons.MOD_LETTERS.setdefault(key, (e["name_en"] if _lang_en() and e.get("name_en") else e["name"])[:1].upper())
+        if inst and inst.get("icon"):
+            import mods as _m
+            icons.MOD_ICONS.setdefault(key, os.path.join(_m.STORE, mid, *inst["icon"].split("/")))
+        ic = QLabel()
+        ic.setPixmap(icons.app_icon(key, 44))
+        ic.setFixedSize(44, 44)
+        lay.addWidget(ic, alignment=Qt.AlignTop)
+        text = QVBoxLayout()
+        text.setSpacing(3)
+        en = _lang_en()
+        name = e["name_en"] if en and e.get("name_en") else e["name"]
+        ver = inst["version"] if inst else e["version"]
+        head = QLabel(f"<b>{_esc(name)}</b>&nbsp;&nbsp;<span style='font-size:12px'>{_esc(ver)}</span>")
+        head.setStyleSheet("font-size: 14px;")
+        text.addWidget(head)
+        author = _esc(e["author"])
+        if e.get("author_url"):
+            author = f"<a href='{_esc(e['author_url'])}' style='color:{skins.ACCENT.name()}'>{author}</a>"
+        by = QLabel(tr("Автор: ") + author, objectName="dim", openExternalLinks=True)
+        by.setStyleSheet("font-size: 12px;")
+        text.addWidget(by)
+        desc = e["description_en"] if en and e.get("description_en") else e.get("description", "")
+        if desc:
+            d = QLabel(desc, objectName="dim", wordWrap=True)
+            d.setStyleSheet("font-size: 12px;")
+            text.addWidget(d)
+        notes = []
+        if inst and inst.get("source") == "local":
+            notes.append((tr("Поставлен из папки — не из каталога Liquid Desktop"), False))
+        if inst and online and mods.newer(online["version"], inst["version"]):
+            notes.append((tr("Есть обновление: {}").format(online["version"]), False))
+        if e["api"] > mods.API:
+            notes.append((tr("Нужна более новая версия Liquid Desktop"), True))
+        if mid in mods.errors:
+            notes.append((tr("Ошибка: {}").format(mods.errors[mid]), True))
+        for n, bad in notes:
+            q = QLabel(n, wordWrap=True)
+            q.setStyleSheet("font-size: 12px; color: #ff6b6b;" if bad else
+                            f"font-size: 12px; color: {skins.ACCENT.name()};")
+            text.addWidget(q)
+        lay.addLayout(text, 1)
+        side = QHBoxLayout()
+        side.setSpacing(10)
+        if online and online["api"] <= mods.API and (not inst or inst.get("source") == "local"
+                                                      or mods.newer(online["version"], inst["version"])):
+            b = PillButton(tr("Обновить") if inst else tr("Установить"))
+            b.setToolTip(tr("Скачать мод с GitHub Liquid Desktop; каждый файл сверяется с проверенным"))
+            b.clicked.connect(lambda: page.install(online))
+            side.addWidget(b)
+        if inst:
+            rm = PillButton(tr("Удалить"))
+            rm.setToolTip(tr("Убрать мод с компьютера (его настройки останутся)"))
+            rm.clicked.connect(lambda: page.remove(mid))
+            side.addWidget(rm)
+            sw = Switch()
+            sw.setToolTip(tr("Включить мод: его виджет сразу появится в каталоге"))
+            sw.set_quiet(mods.is_enabled(mid))
+            sw.toggled.connect(lambda on: page.enable(mid, on))
+            side.addWidget(sw)
+        lay.addLayout(side)
+
+
+class BuiltinModRow(QFrame):
+    """Встроенный мод (уже внутри программы, ставить не надо): значок, название, автор, описание, переключатель.
+    Включается сразу, без перезапуска. Сейчас такой один — «Желе» (jelly.py)."""
+
+    def __init__(self, Switch, mod):
+        super().__init__()
+        import icons
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        en = _lang_en()
+        name = mod.NAME_EN if en else mod.NAME
+        key = f"mod_{mod.ID}"
+        icons.TILES.setdefault(key, ("#FF7AD9", "#8B5CFF"))
+        icons.MOD_LETTERS.setdefault(key, name[:1].upper())
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 8, 0, 8)
+        lay.setSpacing(14)
+        ic = QLabel()
+        ic.setPixmap(icons.app_icon(key, 44))
+        ic.setFixedSize(44, 44)
+        lay.addWidget(ic, alignment=Qt.AlignTop)
+        text = QVBoxLayout()
+        text.setSpacing(3)
+        head = QLabel(f"<b>{_esc(name)}</b>&nbsp;&nbsp;<span style='font-size:12px'>{_esc(tr('мод'))}</span>")
+        head.setStyleSheet("font-size: 14px;")
+        text.addWidget(head)
+        author = _esc(mod.AUTHOR)
+        if mod.AUTHOR_URL:
+            author = f"<a href='{_esc(mod.AUTHOR_URL)}' style='color:{skins.ACCENT.name()}'>{author}</a>"
+        by = QLabel(tr("Автор: ") + author, objectName="dim", openExternalLinks=True)
+        by.setStyleSheet("font-size: 12px;")
+        text.addWidget(by)
+        d = QLabel(mod.DESCRIPTION_EN if en else mod.DESCRIPTION, objectName="dim", wordWrap=True)
+        d.setStyleSheet("font-size: 12px;")
+        text.addWidget(d)
+        note = QLabel(tr("Встроен в Liquid Desktop — включается сразу, без перезапуска"), wordWrap=True)
+        note.setStyleSheet(f"font-size: 12px; color: {skins.ACCENT.name()};")
+        text.addWidget(note)
+        lay.addLayout(text, 1)
+        sw = Switch()
+        sw.setToolTip(tr("Включить или выключить мод"))
+        sw.set_quiet(mod.enabled())
+        sw.toggled.connect(mod.set_enabled)
+        lay.addWidget(sw, alignment=Qt.AlignVCenter)
+
+
+class ModsPage(QWidget):
+    """Моды: дополнения от сообщества. Список — с GitHub автора, каждый файл сверяется по sha256.
+    Поставить / включить / выключить — виджет мода сразу появляется в каталоге или пропадает (on_change)."""
+    got_index = Signal(object)
+    installed_one = Signal(object)
+
+    def __init__(self, Switch, PillButton, on_change):
+        super().__init__()
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.Switch, self.PillButton, self.on_change = Switch, PillButton, on_change
+        self.online = None   # список с GitHub (None — ещё не загружали)
+        self.busy = False
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(12)
+        card = QFrame(objectName="card")
+        box = QVBoxLayout(card)
+        box.setContentsMargins(20, 16, 20, 18)
+        box.setSpacing(10)
+        head = QLabel(tr("Каталог модов"))
+        head.setStyleSheet("font-size: 16px; font-weight: 600;")
+        box.addWidget(head)
+        sub = QLabel(tr("Дополнения от сообщества. Каждый мод проверил автор Liquid Desktop, скачивается он "
+                        "только с GitHub проекта, и каждый файл сверяется с проверенным. Свой мод или идею — "
+                        "присылай автору."), objectName="dim", wordWrap=True)
+        sub.setStyleSheet("font-size: 12px;")
+        box.addWidget(sub)
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        self.refresh_btn = PillButton(tr("Проверить моды"))
+        self.refresh_btn.setToolTip(tr("Загрузить свежий список модов с GitHub Liquid Desktop"))
+        self.refresh_btn.clicked.connect(self.refresh)
+        row.addWidget(self.refresh_btn)
+        local = PillButton(tr("Поставить из папки…"))
+        local.setToolTip(tr("Для проверки присланного мода до публикации: папка с mod.json и кодом мода.\n"
+                            "Ставь только то, что сам проверил — мод работает как часть программы."))
+        local.clicked.connect(self.pick_local)
+        row.addWidget(local)
+        row.addStretch()
+        box.addLayout(row)
+        self.status = QLabel("", objectName="dim", wordWrap=True)
+        self.status.setStyleSheet("font-size: 12px;")
+        box.addWidget(self.status)
+        lay.addWidget(card)
+        # встроенные моды — уже в программе, только включить
+        import jelly
+        built = QFrame(objectName="card")
+        bl = QVBoxLayout(built)
+        bl.setContentsMargins(20, 14, 20, 12)
+        bl.setSpacing(0)
+        bh = QLabel(tr("Встроенные моды"))
+        bh.setStyleSheet("font-size: 15px; font-weight: 600; padding-bottom: 4px;")
+        bl.addWidget(bh)
+        bl.addWidget(BuiltinModRow(Switch, jelly))
+        lay.addWidget(built)
+        self.list_card = QFrame(objectName="card")
+        self.list = QVBoxLayout(self.list_card)
+        self.list.setContentsMargins(20, 10, 20, 12)
+        self.list.setSpacing(0)
+        lay.addWidget(self.list_card)
+        lay.addStretch()
+        self.got_index.connect(self.on_index)
+        self.installed_one.connect(self.on_installed)
+        self.render()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self.online is None and not self.busy:
+            self.refresh()
+
+    # ---------- данные
+
+    def refresh(self):
+        if self.busy:
+            return
+        self.busy = True
+        self.status.setText(tr("Загружаю список модов…"))
+
+        def work():
+            import mods
+            try:
+                res = mods.fetch_index()
+            except Exception as err:
+                applog.error("sections.ModsPage.refresh", err)
+                res = err
+            try:
+                self.got_index.emit(res)
+            except RuntimeError:
+                pass
+        threading.Thread(target=work, daemon=True, name="mods-index").start()
+
+    def on_index(self, res):
+        self.busy = False
+        if isinstance(res, Exception):
+            self.status.setText(tr("Не удалось загрузить список модов — нет интернета или GitHub недоступен."))
+            if self.online is None:
+                self.online = []
+        else:
+            self.online = res
+            self.status.setText(tr("Модов в каталоге: {}").format(len(res)) if res else
+                                tr("В каталоге пока нет модов — скоро появятся."))
+        self.render()
+
+    def install(self, entry):
+        if self.busy:
+            return
+        self.busy = True
+        self.status.setText(tr("Ставлю «{}»…").format(entry["name"]))
+
+        def work():
+            import mods
+            err = mods.install(entry)
+            try:
+                self.installed_one.emit((entry, err))
+            except RuntimeError:
+                pass
+        threading.Thread(target=work, daemon=True, name="mods-install").start()
+
+    def on_installed(self, res):
+        import mods
+        entry, err = res
+        self.busy = False
+        if err:
+            self.status.setText(tr("«{}» не поставлен: {}").format(entry["name"], err))
+        else:
+            mods.set_enabled(entry["id"], True)
+            err = self.apply(entry["id"])
+            self.status.setText(tr("«{}» не загрузился: {}").format(entry["name"], err) if err else
+                                tr("«{}» поставлен и включён — он уже в каталоге виджетов.").format(entry["name"]))
+        self.render()
+
+    def pick_local(self):
+        import mods
+        from PySide6.QtWidgets import QFileDialog
+        folder = QFileDialog.getExistingDirectory(None, tr("Папка мода (с mod.json)"))
+        if not folder:
+            return
+        mid, err = mods.install_local(folder)
+        if err:
+            self.status.setText(tr("Мод из папки не поставлен: {}").format(err))
+        else:
+            mods.set_enabled(mid, True)
+            err = self.apply(mid)
+            self.status.setText(tr("Мод «{}» не загрузился: {}").format(mid, err) if err else
+                                tr("Мод «{}» поставлен из папки и включён — он уже в каталоге виджетов.").format(mid))
+        self.render()
+
+    def remove(self, mid):
+        import mods
+        mods.remove(mid)
+        self.apply(mid)
+        self.status.setText(tr("Мод удалён."))
+        self.render()
+
+    def enable(self, mid, on):
+        import mods
+        mods.set_enabled(mid, on)
+        err = self.apply(mid)
+        if err:  # список перерисовать только с ошибкой: иначе тумблер пропадёт посреди своей анимации
+            self.status.setText(tr("Мод не загрузился: {}").format(err))
+            self.render()
+
+    def apply(self, mid):
+        """Каталог виджетов — под новое состояние мода сразу. -> текст ошибки или None."""
+        try:
+            return self.on_change(mid)
+        except Exception as err:
+            applog.error("sections.ModsPage.apply", err)
+            return str(err) or type(err).__name__
+
+    # ---------- список
+
+    def render(self):
+        import mods
+        while self.list.count():
+            item = self.list.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.setParent(None)
+                w.deleteLater()
+        have = mods.installed()
+        online = {e["id"]: e for e in (self.online or [])}
+        ids = list(online) + [m for m in have if m not in online]
+        if not ids:
+            empty = QLabel(tr("Пока пусто.") if self.online is not None else tr("Загружаю…"), objectName="dim")
+            empty.setStyleSheet("font-size: 13px; padding: 8px 0;")
+            self.list.addWidget(empty)
+            return
+        for i, mid in enumerate(ids):
+            if i:
+                line = QFrame()
+                line.setFixedHeight(1)
+                line.setStyleSheet("background: rgba(128,128,128,40);")
+                self.list.addWidget(line)
+            inst = have.get(mid)
+            self.list.addWidget(ModRow(self, self.Switch, self.PillButton, online.get(mid) or inst, inst,
+                                       online.get(mid)))

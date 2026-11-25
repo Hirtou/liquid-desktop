@@ -14,6 +14,12 @@ $Out = Join-Path $Build "LiquidDesktop"
 $Py = Join-Path $Out "python"
 $Zip = Join-Path $Build "LiquidDesktop-portable-win64.zip"
 
+# without this line installed copies never hear about new versions (0.4.2-0.4.3 shipped without it)
+# без этой строки установленные копии не узнают о новых версиях (0.4.2–0.4.3 так и вышли)
+if (-not (Select-String -Quiet -SimpleMatch "updater.Updater(" (Join-Path $Repo "desktop-widgets\main.py"))) {
+    throw "desktop-widgets\main.py does not start the updater (updater.Updater) / не подключена проверка обновлений"
+}
+
 New-Item -ItemType Directory -Force $Build | Out-Null
 if (Test-Path $Out) { Remove-Item -Recurse -Force $Out }
 if (Test-Path $Zip) { Remove-Item -Force $Zip }

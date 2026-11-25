@@ -44,6 +44,7 @@ class Updater(QObject):
     progress = Signal(int)        # проценты скачивания
     failed = Signal(str)
     downloaded = Signal(str)      # путь к установщику
+    retry = Signal()              # проверка не удалась — попробовать скоро ещё раз
 
     def __init__(self, tray, menu, before_action, quit_app, button=None):
         """button — кнопка «Установить обновление» в окне настроек (видна, только когда есть обновление)."""
@@ -63,7 +64,9 @@ class Updater(QObject):
         self.progress.connect(self.on_progress)
         self.failed.connect(self.on_failed)
         self.downloaded.connect(self.run_setup)
+        self.retry.connect(lambda: QTimer.singleShot(10 * 60 * 1000, self.check))
         tray.messageClicked.connect(lambda: self.url and self.install())
+        print(f"обновления: сборка {self.build or 'из исходников — не проверяю'}", flush=True)
         if self.build:
             QTimer.singleShot(20000, self.check)
             self.timer = QTimer(self, interval=EVERY, timeout=self.check)
@@ -79,12 +82,15 @@ class Updater(QObject):
             rel = json.loads(_get(API))
             assets = {a["name"]: a["browser_download_url"] for a in rel.get("assets", [])}
             if SETUP not in assets or "version.json" not in assets:
+                print("обновления: в последнем релизе нет установщика или version.json", flush=True)
                 return
             remote = str(json.loads(_get(assets["version.json"]))["build"])
+            print(f"обновления: у нас {self.build}, на GitHub {remote} ({rel.get('tag_name')})", flush=True)
             if remote > self.build:
                 self.found.emit(remote, assets[SETUP], str(rel.get("tag_name") or ""))
-        except Exception:  # нет сети, лимит GitHub — просто попробуем позже
-            pass
+        except Exception as e:  # нет сети, лимит GitHub — повторить через 10 минут, а не через 6 часов
+            print(f"обновления: не проверилось ({type(e).__name__}: {e}), повтор через 10 минут", flush=True)
+            self.retry.emit()
 
     def label(self):
         v = self.version.lstrip("v").replace("-alpha", " alpha")
@@ -140,6 +146,7 @@ class Updater(QObject):
             os.replace(path + ".part", path)
             self.downloaded.emit(path)
         except Exception as e:
+            print(f"обновления: не скачалось ({type(e).__name__}: {e})", flush=True)
             self.failed.emit(str(e))
 
     def on_failed(self, err):

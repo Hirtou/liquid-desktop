@@ -7,7 +7,7 @@ import math
 from functools import lru_cache
 
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap, QRadialGradient
+from PySide6.QtGui import QColor, QImage, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap, QRadialGradient
 
 DPR = 2.0  # рисуем в двойном разрешении — чётко и на 150–200% масштабе
 
@@ -196,7 +196,24 @@ TILES = {
 }
 
 
+MOD_ICONS = {}    # ключ виджета-мода -> его значок (png из папки мода), см. mods.load_widgets
+MOD_LETTERS = {}  # ключ виджета-мода без значка -> первая буква названия на плитке
+
+
 def _tile_glyph(p, name):
+    if name in MOD_ICONS:  # мод со своим значком: картинка поверх плитки
+        img = QImage(MOD_ICONS[name])
+        if not img.isNull():
+            p.drawImage(QRectF(18, 18, 64, 64), img)
+            return
+    if name in MOD_LETTERS:
+        from PySide6.QtGui import QFont
+        f = QFont("Segoe UI Semibold")
+        f.setPixelSize(52)
+        p.setFont(f)
+        p.setPen(QColor("white"))
+        p.drawText(QRectF(0, 0, 100, 100), Qt.AlignCenter, MOD_LETTERS[name])
+        return
     white = QColor("white")
     if name in ("clock", "meteoclock", "analog"):
         ink = QColor("#20232c") if name == "analog" else white

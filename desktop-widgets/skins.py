@@ -84,6 +84,22 @@ CUSTOM_DEFAULT = dict(
     accent=dict(kind="linear", angle=90, stops=[["#8c8c96ff", 0], ["#c4c4ccff", 100]]),
 )
 _custom = None  # своя тема сейчас (словарь как CUSTOM_DEFAULT)
+_glow_size = 50  # «Размер свечения» встроенной темы со свечением (у каждой свой, config app.glow_sizes; 50 — как было)
+
+
+def glow_size_of(app, skin_id):
+    """Размер свечения встроенной темы из настроек виджетов (раздел app) -> 0..100, по умолчанию 50."""
+    sizes = app.get("glow_sizes") if isinstance(app, dict) else None
+    v = sizes.get(skin_id, 50) if isinstance(sizes, dict) else 50
+    return max(0, min(100, v)) if isinstance(v, int) and not isinstance(v, bool) else 50
+
+
+def has_glow(skin_id=None):
+    """У темы есть свечение вокруг карточки? (у своей — если включено в редакторе)"""
+    sid = skin_id or _current
+    if sid == "custom":
+        return bool((_custom or custom_spec())["glow"])
+    return bool(SKINS.get(sid, {}).get("glow"))
 FILL_MAX = 0.42  # заливка своей темы сильнее не бывает: под ней должно оставаться живое стекло
 
 
@@ -261,12 +277,14 @@ def _read_wallpaper(path):
     return tint, acc, acc2
 
 
-def apply(skin_id, custom=None):
+def apply(skin_id, custom=None, glow_size=50):
     """Включить тему: перекрасить общие цвета акцента. Виджеты после этого нужно перерисовать (см. main).
-    custom — настройки своей темы (config["app"]["custom_skin"])."""
-    global _current, version, _auto, _custom
+    custom — настройки своей темы (config["app"]["custom_skin"]); glow_size — размер свечения встроенной темы
+    (glow_size_of: config["app"]["glow_sizes"]), у своей темы он свой, в custom."""
+    global _current, version, _auto, _custom, _glow_size
     _current = skin_id if skin_id in SKINS else "liquid"
     _custom = custom_spec(custom)
+    _glow_size = max(0, min(100, glow_size)) if isinstance(glow_size, int) and not isinstance(glow_size, bool) else 50
     _grad_cache.clear()
     s = SKINS[_current]
     s_custom = SKINS["custom"]
@@ -424,12 +442,13 @@ def _soft(a, r):
 
 
 def glow_scale(spec=None):
-    """«Размер свечения» своей темы (0..100, по умолчанию 50 — как было) -> (множитель ширины, множитель яркости).
-    spec — своя тема из редактора (превью); без него — текущая тема: не своя — (1, 1)."""
+    """«Размер свечения» (0..100, по умолчанию 50 — как было) -> (множитель ширины, множитель яркости).
+    spec — своя тема из редактора (превью); без него — текущая тема: своя — её размер, встроенная — _glow_size."""
     if spec is None:
-        if _current != "custom" or _custom is None:
-            return 1.0, 1.0
-        spec = _custom
+        if _current == "custom" and _custom is not None:
+            spec = _custom
+        else:
+            spec = {"glow_size": _glow_size}
     s = max(0, min(100, spec.get("glow_size", 50) if isinstance(spec.get("glow_size", 50), int) else 50)) / 100
     # ширина ×0.4…×1.6: больше — ореол упирается в поле тени вокруг карточки (18 px) и обрезается краем окна
     return 0.4 + 1.2 * s, 0.6 + 0.8 * s

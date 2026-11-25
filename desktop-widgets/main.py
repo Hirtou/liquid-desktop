@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (QAbstractButton, QApplication, QFrame, QGraphicsO
 import applog
 import bugreport
 import ipc
+import updater
 import skins
 import core
 import glass
@@ -249,8 +250,9 @@ class TitleButton(QAbstractButton):
 class PillButton(QAbstractButton):
     """Стеклянная кнопка-капсула с текстом."""
 
-    def __init__(self, text):
+    def __init__(self, text, accent=False):
         super().__init__(cursor=Qt.PointingHandCursor)
+        self.accent = accent  # синяя (как выбранный вариант) — заметная: «Установить обновление»
         self.setText(text)
         self.setAttribute(Qt.WA_Hover)
         self.setFixedHeight(32)
@@ -259,6 +261,15 @@ class PillButton(QAbstractButton):
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
+        if self.accent:
+            r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(ACCENT).lighter(112 if self.underMouse() else 100) if self.isEnabled()
+                       else QColor(47, 107, 255, 120))
+            p.drawRoundedRect(r, r.height() / 2, r.height() / 2)
+            p.setPen(QColor("#ffffff"))
+            p.drawText(r, Qt.AlignCenter, self.text())
+            return
         dark = bool(self.window().dark)
         hover = self.underMouse()
         r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
@@ -576,7 +587,16 @@ class Preview(QWidget):
             self.release()
         if self.copy is None:
             self.born, self.copy_name = time.monotonic(), name
-            self.copy = self.cls()
+            try:
+                self.copy = self.cls()
+            except Exception as err:
+                if not hasattr(self.cls, "mod_info"):
+                    raise
+                import mods  # мод не создаётся — без превью, причина видна на вкладке «Моды»
+                mods.errors[self.cls.mod_info["id"]] = f"не создаётся: {err}"
+                applog.error(f"main.Preview {self.cls.key}", err)
+                self.shown = name
+                return
             self.copy.preview = True  # превью — всегда обычного размера (настройка «Размер» — у самого виджета)
             if self.copy.base:
                 QWidget.setFixedSize(self.copy, *self.copy.base)
@@ -685,9 +705,10 @@ class CardText(QWidget):
     """Значок, название и описание карточки каталога (две строки, лишнее — многоточием; целиком — в подсказке).
     Рисуется один раз в картинку под ширину и тему — при прокрутке только копируется."""
 
-    def __init__(self, icon, title, text):
+    def __init__(self, icon, title, text, badge=None):
         super().__init__()
         self.icon, self.title, self.text = icon, title, text
+        self.badge = badge  # пометка после названия (виджет из мода — «мод»)
         self.name_font = QFont("Segoe UI")
         self.name_font.setPixelSize(15)
         self.name_font.setWeight(QFont.DemiBold)
@@ -721,6 +742,21 @@ class CardText(QWidget):
             p.setFont(self.name_font)
             p.setPen(QColor(th["fg"]))
             p.drawText(QRectF(30, 0, self.width() - 30, 22), Qt.AlignLeft | Qt.AlignVCenter, self.title)
+            if self.badge:  # пометка «мод»: маленькая плашка цвета темы сразу после названия
+                bf = QFont("Segoe UI")
+                bf.setPixelSize(10)
+                bf.setWeight(QFont.Bold)
+                bx = 30 + QFontMetricsF(self.name_font).horizontalAdvance(self.title) + 7
+                bw = QFontMetricsF(bf).horizontalAdvance(self.badge) + 12
+                if bx + bw <= self.width():
+                    acc = QColor(skins.ACCENT)
+                    acc.setAlpha(60 if dark else 45)
+                    p.setPen(Qt.NoPen)
+                    p.setBrush(acc)
+                    p.drawRoundedRect(QRectF(bx, 4, bw, 15), 7.5, 7.5)
+                    p.setFont(bf)
+                    p.setPen(QColor(skins.ACCENT).lighter(150) if dark else QColor(skins.ACCENT).darker(130))
+                    p.drawText(QRectF(bx, 4, bw, 15), Qt.AlignCenter, self.badge)
             p.setFont(self.desc_font)
             p.setPen(QColor(th["dim"]))
             fm, width = QFontMetricsF(self.desc_font), self.width()
@@ -760,7 +796,8 @@ class Card(QFrame):
         row.setContentsMargins(6, 0, 0, 0)
         # значок, название и описание — одна готовая картинка (CardText), а не QLabel'ы со стилем:
         # при прокрутке каталога каждый кадр перерисовывает ~20 видимых карточек, по 0.7 мс каждая было
-        self.text = CardText(icons.app_icon(cls.copy_of or cls.key, 22), cls.title, cls.description)
+        self.text = CardText(icons.app_icon(cls.copy_of or cls.key, 22), cls.title, cls.description,
+                             tr("мод") if getattr(cls, "mod_info", None) else None)
         row.addWidget(self.text, 1)
         if on_remove is not None:  # копия фото / гифки — убрать совсем
             gone = PillButton("×")
@@ -824,6 +861,11 @@ class Catalog(DesktopWidget):
     title = tr("Каталог")
     keep_bottom = False  # окно программы — обычное, его можно поднимать
 
+    def jelly_ok(self):
+        """Окно настроек «Желе» не гнёт: в нём кнопки и ползунки, а желе рисует окно картинкой со сдвигом —
+        клик попадал бы не туда, куда нарисовано (так и было: вкладка «Темы» сжималась, ползунок не ловился)."""
+        return False
+
     def __init__(self):
         super().__init__()
         # своя тема у каталога не задана — та же, что выбрана для всех виджетов («Тема» внизу каталога)
@@ -852,7 +894,7 @@ class Catalog(DesktopWidget):
         big, small = QFont("Segoe UI Semibold"), QFont("Segoe UI")
         big.setPixelSize(26)
         small.setPixelSize(12)
-        names = (tr("Виджеты"), tr("Остров"), tr("Погода"), tr("Темы"))
+        names = (tr("Виджеты"), tr("Остров"), tr("Погода"), tr("Темы"), tr("Моды"))
         width = max([QFontMetricsF(big).horizontalAdvance(t) for t in names] +
                     [QFontMetricsF(small).horizontalAdvance(tr(t)) for t in self.SECTION_SUBS.values()])
         for w in (title, sub):
@@ -861,12 +903,18 @@ class Catalog(DesktopWidget):
         head.addSpacing(18)
         # одно приложение — три раздела: виджеты, остров, погода (место — общее для виджетов и острова)
         self.section_bar = Segmented([("widgets", tr("Виджеты")), ("island", tr("Остров")), ("weather", tr("Погода")),
-                                      ("themes", tr("Темы"))],
+                                      ("themes", tr("Темы")), ("mods", tr("Моды"))],
                                      "widgets")
-        self.section_bar.setToolTip(tr("Разделы настроек: виджеты, динамический остров, погода и место, темы"))
+        self.section_bar.setToolTip(tr("Разделы настроек: виджеты, динамический остров, погода и место, темы, моды"))
         self.section_bar.changed.connect(self.show_section)
         head.addWidget(self.section_bar, alignment=Qt.AlignTop)
         head.addStretch()
+        # появляется в шапке, когда на GitHub вышла новая версия (её находит updater раз в 6 часов)
+        self.update_btn = PillButton(tr("Установить обновление"), accent=True)
+        self.update_btn.setToolTip(tr("Вышла новая версия. Скачается и встанет поверх — виджеты и настройки останутся."))
+        self.update_btn.hide()
+        head.addWidget(self.update_btn, alignment=Qt.AlignTop)
+        head.addSpacing(8)
         self.title_label, self.sub_label = title, sub
         # язык — в шапке: в нижней строке настроек ему не хватало места (окно расползалось вширь)
         lang_tip = tr("Язык меняется перезапуском программы (пара секунд).")
@@ -910,9 +958,7 @@ class Catalog(DesktopWidget):
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll.setStyleSheet(SCROLL_STYLE)
         self.scroll.viewport().setAutoFillBackground(False)
-        rows = (len(widgets.ALL) + COLUMNS - 1) // COLUMNS
-        avail = (self.screen() or QApplication.primaryScreen()).availableGeometry().height()
-        self.scroll.setFixedHeight(min(rows * 208 - 12, avail - 320))
+        self.fit_scroll()
         # ширина — по окну (её задаёт нижняя панель настроек): карточки раскладываются на всю ширину, см. FlowGrid
         self.scroll.setMinimumWidth(COLUMNS * 256 - 12 + 6 + 10)
         # крутят колёсико — превью не трогаем; догоняют, когда прокрутка остановилась
@@ -1064,7 +1110,8 @@ class Catalog(DesktopWidget):
         self.pages = {"widgets": page}
         for name, sec in (("island", sections.IslandPage(Switch, Segmented)),
                           ("weather", sections.WeatherPage(Switch, Segmented, PillButton)),
-                          ("themes", sections.ThemesPage(Segmented, PillButton))):
+                          ("themes", sections.ThemesPage(Segmented, PillButton)),
+                          ("mods", sections.ModsPage(Switch, PillButton, self.mod_changed))):
             holder = QScrollArea(widgetResizable=True, frameShape=QFrame.NoFrame)
             holder.setWidget(sec)
             holder.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -1141,6 +1188,7 @@ class Catalog(DesktopWidget):
         "island": "Динамический остров вверху экрана: вид, стекло и что на нём показывать",
         "weather": "Место и сайт погоды — для виджетов погоды и пилюли острова",
         "themes": "Цвет стекла и кнопок — у всех виджетов и острова сразу",
+        "mods": "Дополнения от сообщества, проверенные автором Liquid Desktop",
     }
 
     def show_section(self, name):
@@ -1150,7 +1198,7 @@ class Catalog(DesktopWidget):
         self.section_bar.set_quiet(name)
         old, new = self.stack.currentWidget(), self.pages[name]
         self.title_label.setText({"widgets": tr("Виджеты"), "island": tr("Остров"), "weather": tr("Погода"),
-                                  "themes": tr("Темы")}[name])
+                                  "themes": tr("Темы"), "mods": tr("Моды")}[name])
         self.sub_label.setText(tr(self.SECTION_SUBS[name]))
         if new is not old:
             order = list(self.pages.values())
@@ -1367,6 +1415,59 @@ class Catalog(DesktopWidget):
             self.tray.showMessage(tr("Виджеты работают"), tr("Окно открывается значком в трее. "
                                   "Выйти совсем — кнопка «Выйти из программы»."), make_icon(), 4000)
 
+    def fit_scroll(self):
+        """Высота прокрутки каталога — по числу рядов карточек (меняется, когда мод добавил или убрал карточку)."""
+        rows = (len(widgets.ALL) + COLUMNS - 1) // COLUMNS
+        avail = (self.screen() or QApplication.primaryScreen()).availableGeometry().height()
+        self.scroll.setFixedHeight(min(rows * 208 - 12, avail - 320))
+
+    def mod_changed(self, mid):
+        """Мод поставили, обновили, включили, выключили или удалили — каталог меняется сразу, без перезапуска.
+        Виджет мода, который был на рабочем столе, после обновления или повторного включения встаёт обратно.
+        -> текст ошибки или None."""
+        import mods
+        key = f"mod_{mid}"
+        old = next((c for c in widgets.ALL if c.key == key), None)
+        inst = mods.installed().get(mid)
+        want = inst is not None and mods.is_enabled(mid)
+        if old is not None and want and old.mod_info.get("version") == inst["version"] \
+                and old.mod_info.get("files") == inst["files"]:
+            return None  # уже в каталоге, тот же самый
+        if old is not None:
+            w = self.instances.pop(key, None)
+            if w is not None:
+                w.mod_unload = True  # закрываем сами: «visible» остаётся — включат снова, виджет вернётся
+                w.close()
+            card = self.cards.pop(key, None)
+            if card is not None:
+                card.preview.release()
+                self.grid.remove(card)
+                card.deleteLater()
+            widgets.ALL.remove(old)
+            mods.loaded.pop(mid, None)
+        if want:
+            cls = mods.load_one(mid, inst)
+            if cls is None:
+                self.fit_scroll()
+                return mods.errors.get(mid) or "не загрузился"
+            widgets.ALL.append(cls)
+            card = Card(cls, lambda c=cls: self.toggle(c))
+            card.setFixedSize(244, 196)
+            card.switch.set_quiet(False)
+            self.grid.add(card)
+            self.cards[key] = card
+            if config.section(key).get("visible"):
+                try:
+                    self.toggle(cls)
+                except Exception as err:
+                    applog.error("main.mod_changed", err)
+                    self.instances.pop(key, None)
+                    card.switch.set_quiet(False)
+        self.fit_scroll()
+        self.apply_sort(animate=False)
+        self.refresh_counts()
+        return None
+
     def set_lang(self, name):
         """Язык: сохранить и перезапуститься — подписи меню и списков собираются при запуске."""
         config.section("app")["lang"] = name
@@ -1578,14 +1679,18 @@ class Catalog(DesktopWidget):
     def closed(self, w):
         if self.quitting:
             return
-        if config.section(w.key).get("visible"):  # не сам пользователь (он сперва снимает visible)
+        if config.section(w.key).get("visible") and not getattr(w, "mod_unload", False):
+            # не сам пользователь (он сперва снимает visible) и не выключенный на ходу мод
             # кто закрыл виджет — в widgets.log: ловим случай, когда виджеты выключаются сами
             print(f"закрыт виджет {w.key}; стек:", file=sys.stderr)
             traceback.print_stack(limit=6, file=sys.stderr)
-        self.instances.pop(w.key, None)
+        if self.instances.get(w.key) is w:
+            self.instances.pop(w.key)
         # удалить окно сейчас и здесь, в главном потоке; иначе последняя ссылка может остаться
         # у фонового потока (снимок экрана, погода), и окно удалится оттуда — это вылет
         w.deleteLater()
+        if getattr(w, "mod_unload", False):  # мод перезагрузили на ходу — карточка уже новая, её не трогать
+            return
         for switch in self.switches(w.key):  # копию могли удалить — плитки уже нет
             if switch.isChecked():
                 switch.toggle()
@@ -1666,6 +1771,9 @@ class SetWindow(DesktopWidget):
     key = "sets"
     title = tr("Набор")
     keep_bottom = False
+
+    def jelly_ok(self):
+        return False  # окно с кнопками, как каталог: см. Catalog.jelly_ok
     shadow_ready = Signal(object, object)
     TEXTS = {"photo": (tr("Фото"), tr("Каждая фоторамка — отдельный виджет: свои фото, размер и место"),
                        tr("Добавить фоторамку"), tr("Ещё один виджет со своими фото")),
@@ -1956,11 +2064,17 @@ def main():
     elif already_running():
         return
     setup_log()  # после проверки: вторая копия (просит открыть окно и выходит) журнал не трогает
-    skins.apply(config.section("app").get("skin", "liquid"), config.section("app").get("custom_skin"))
+    _app = config.section("app")
+    skins.apply(_app.get("skin", "liquid"), _app.get("custom_skin"), skins.glow_size_of(_app, _app.get("skin", "liquid")))
     applog.log_screens(app)
     app.setQuitOnLastWindowClosed(False)
     app.setFont(QFont("Segoe UI", 10))
     core.accent_palette()  # ползунки — цветом темы
+    try:
+        import mods  # включённые моды — в каталог рядом со своими виджетами
+        widgets.ALL.extend(mods.load_widgets())
+    except Exception as _err:
+        applog.error("main.mods", _err)
     catalog = Catalog()
     if autostart_enabled():
         set_autostart(True)  # обновить запись автозапуска до текущей (с --tray)
@@ -2027,7 +2141,7 @@ def main():
     menu.addAction(tr("Обновить виджеты"), catalog.refresh_widgets)
     menu.addAction(tr("Сообщить об ошибке"), bugreport.report)
     menu.addAction(tr("Поддержать автора"), bugreport.support)
-    menu.addSeparator()
+    sep = menu.addSeparator()
     menu.addAction(tr("Выход"), catalog.quit)
     tray.setContextMenu(menu)
     tray.activated.connect(lambda reason: catalog.open() if reason == QSystemTrayIcon.Trigger else None)
@@ -2038,6 +2152,8 @@ def main():
         # поставить его ещё раз, когда вход в систему закончится
         for delay in (15000, 60000):
             QTimer.singleShot(delay, lambda: (tray.hide(), tray.show()))
+    # проверка обновлений: без неё (0.4.2–0.4.3) установленные копии не узнавали о новых версиях
+    catalog.updater = updater.Updater(tray, menu, sep, catalog.quit, catalog.update_btn)
 
     def on_game(playing):
         tray.setToolTip(tr("Виджеты — игровой режим: всё на паузе")

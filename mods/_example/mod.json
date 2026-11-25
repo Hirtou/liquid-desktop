@@ -1,0 +1,15 @@
+{
+  "id": "counter",
+  "name": "Счётчик",
+  "name_en": "Counter",
+  "description": "Пример мода: клик — +1",
+  "description_en": "Example mod: click to count",
+  "author": "Hirtou",
+  "author_url": "https://github.com/Hirtou",
+  "version": "1.0.0",
+  "api": 1,
+  "type": "widget",
+  "entry": "widget.py",
+  "class": "CounterWidget",
+  "tile": ["#FF9F0A", "#FF6A00"]
+}

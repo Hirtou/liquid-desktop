@@ -1,0 +1,15 @@
+{
+  "id": "block_blast",
+  "name": "Блокбаст",
+  "name_en": "Block Blast",
+  "description": "Головоломка: ставь фигуры и взрывай линии",
+  "description_en": "Puzzle: place pieces and blast lines",
+  "author": "velzevul02",
+  "author_url": "",
+  "version": "1.0.1",
+  "api": 1,
+  "type": "widget",
+  "entry": "widget.py",
+  "class": "BlockBlastWidget",
+  "tile": ["#6FD0FF", "#6438E0"]
+}

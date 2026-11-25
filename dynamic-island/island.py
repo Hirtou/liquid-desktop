@@ -28,6 +28,7 @@ from PySide6.QtGui import (QColor, QCursor, QFont, QFontMetricsF, QImage, QLinea
 from PySide6.QtWidgets import QApplication, QMenu, QWidget
 
 import agents as ag
+import applog
 import screen
 from bridge import SERVER as WIDGETS_SERVER
 import skins
@@ -266,6 +267,7 @@ class Island(QWidget):
         self.bg_timer = QTimer(self, interval=700, timeout=self.grab_bg)
         # окна открылись/закрылись под островом — стекло сразу, и ещё раз после анимации окна
         self.bg_again, self.bg_kicked = False, 0.0
+        self.black_grabs = 0  # сколько снимков подряд под островом вышли целиком чёрными (см. on_bg)
         self.bg_follow0 = QTimer(self, singleShot=True, interval=50, timeout=self.grab_bg)  # окно успело нарисоваться
         self.bg_follow1 = QTimer(self, singleShot=True, interval=150, timeout=self.grab_bg)
         self.bg_follow2 = QTimer(self, singleShot=True, interval=420, timeout=self.grab_bg)
@@ -363,8 +365,10 @@ class Island(QWidget):
         src["skin"] = skin if skin in skins.SKINS else "liquid"
         # своя тема: её цвета тоже в конфиге виджетов — поменяли в редакторе, остров перекрасится
         src["custom"] = skins.custom_spec(widgets.section("app").get("custom_skin"))
-        if src["skin"] != getattr(skins, "_current", None) or src["custom"] != getattr(skins, "_custom", None):
-            skins.apply(src["skin"], src["custom"])  # тёмная ли своя тема — известно только после apply
+        # размер свечения встроенной темы («Неон») — ползунок на вкладке «Темы» в каталоге
+        src["glow_size"] = skins.glow_size_of(widgets.section("app"), src["skin"])
+        if src["skin"] != getattr(skins, "_current", None) or src["custom"] != getattr(skins, "_custom", None)                 or src["glow_size"] != getattr(skins, "_glow_size", None):
+            skins.apply(src["skin"], src["custom"], src["glow_size"])  # тёмная ли своя тема — известно только после apply
         s = skins.SKINS[src["skin"]]
         # тема двигает стекло от настроек, а не заменяет их (как у виджетов: skins.glass_params)
         src["blur"], src["haze"] = skins.glass_params(src["blur"], src["haze"])
@@ -401,8 +405,8 @@ class Island(QWidget):
         if not force and look == self.look and dark == DARK:
             return
         acrylic_was = self.look.get("acrylic") if self.look else None
-        if look["skin"] != self.look.get("skin") or look["custom"] != self.look.get("custom"):
-            skins.apply(look["skin"], look["custom"])
+        if look["skin"] != self.look.get("skin") or look["custom"] != self.look.get("custom")                 or look["glow_size"] != self.look.get("glow_size"):
+            skins.apply(look["skin"], look["custom"], look["glow_size"])
             # синий острова: у Liquid — свой, как был; у остальных тем — акцент темы
             BLUE.setRgb(*((0x4c, 0x8d, 0xff) if look["skin"] == "liquid" else skins.ACCENT.getRgb()[:3]))
         self.look = look
@@ -506,6 +510,8 @@ class Island(QWidget):
         if self.bg_again:  # пока считали, под островом ещё что-то поменялось
             self.bg_again = False
             QTimer.singleShot(0, self.grab_bg)
+        if img is not None and self.isVisible() and self.fix_black_grab(lum):
+            return
         if img is not None and self.isVisible():
             # под островом то же самое — снимаем всё реже (до раза в 3 с); поменялось — снова часто
             same = self.bg is not None and img == self.bg
@@ -519,6 +525,31 @@ class Island(QWidget):
                 self.refresh_look(force=True)
             self.bg_gen += 1
             self.repaint_area()
+
+    def fix_black_grab(self, lum):
+        """Windows иногда ломает окну «не попадать в снимки» (23.11.2026, сборка 26300): флаг стоит, а в снимке
+        на месте острова — чёрный прямоугольник. Стекло тогда снимает этот чёрный и больше не меняется. Настоящий
+        экран целиком чёрным (до нуля) под островом почти не бывает: 2 таких снимка подряд — заново включить
+        невидимость, не помогло (5 подряд) — пересоздать окно спрятав и показав его. -> True, если снимок плохой."""
+        if lum > 0.0:
+            self.black_grabs = 0
+            return False
+        self.black_grabs += 1
+        self.bg_timer.setInterval(700)
+        hwnd = int(self.winId())
+        if self.black_grabs == 2:
+            applog.line("остров: снимок под островом чёрный — заново прячусь от снимков")
+            screen.include_in_capture(hwnd)
+            QTimer.singleShot(60, lambda: (screen.exclude_from_capture(int(self.winId())), self.grab_bg()))
+        elif self.black_grabs == 5:
+            applog.line("остров: снимок всё ещё чёрный — пересоздаю окно")
+            self.hide()
+            # retarget сам покажет остров, если ему есть что показывать (не во время игры и т.п.);
+            # showEvent заново прячет окно от снимков и запускает стекло
+            QTimer.singleShot(120, self.retarget)
+        elif self.black_grabs > 5 and self.black_grabs % 40 == 0:
+            applog.line("остров: снимок под островом остаётся чёрным")
+        return True
 
     # ---------- музыка ----------
 

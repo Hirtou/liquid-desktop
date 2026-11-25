@@ -19,6 +19,7 @@ from PySide6.QtGui import (QColor, QCursor, QGuiApplication, QLinearGradient, QP
 from PySide6.QtWidgets import QApplication, QMenu, QWidget
 
 import glass
+import jelly
 from desktop_host import DesktopHost
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -487,7 +488,8 @@ def set_skin(skin_id):
     """Сменить тему оформления: запомнить, перекрасить акцент и пересчитать стекло у всех виджетов сразу."""
     config.section("app")["skin"] = skin_id
     config.save()
-    skins.apply(skin_id, config.section("app").get("custom_skin"))
+    app = config.section("app")
+    skins.apply(skin_id, app.get("custom_skin"), skins.glow_size_of(app, skin_id))
     applog.line(f"тема оформления: {skins.current_id()}")
     redraw_skin()
 
@@ -495,8 +497,25 @@ def set_skin(skin_id):
 def set_custom(spec):
     """Своя тема поменялась в редакторе: запомнить и сразу показать на виджетах (если она включена)."""
     config.section("app")["custom_skin"] = spec
-    skins.apply(skins.current_id(), spec)
+    skins.apply(skins.current_id(), spec, skins.glow_size_of(config.section("app"), skins.current_id()))
     redraw_skin()
+    _save_soon()
+
+
+def set_glow_size(skin_id, value):
+    """«Размер свечения» встроенной темы (вкладка «Темы»): запомнить для этой темы и сразу показать."""
+    app = config.section("app")
+    sizes = app.get("glow_sizes") if isinstance(app.get("glow_sizes"), dict) else {}
+    sizes[skin_id] = max(0, min(100, int(value)))
+    app["glow_sizes"] = sizes
+    if skins.current_id() == skin_id:
+        skins.apply(skin_id, app.get("custom_skin"), sizes[skin_id])
+        redraw_skin()
+    _save_soon()
+
+
+def _save_soon():
+    """Настройки темы — на диск, когда перестали двигать ползунок; остров подхватит оттуда."""
     # на диск — когда перестали двигать (ползунок цвета даёт десятки правок в секунду), остров подхватит оттуда
     global _custom_save
     if _custom_save is None:
@@ -567,7 +586,7 @@ def skin_menu(menu):
     return sub
 
 
-class DesktopWidget(QWidget):
+class DesktopWidget(jelly.JellyMixin, QWidget):
     """Окно без рамки на рабочем столе: карточка из «жидкого акрила», таскается мышью."""
 
     key = ""
@@ -591,6 +610,7 @@ class DesktopWidget(QWidget):
         self.cfg = config.section(self.key)
         self.on_closed = on_closed
         self._drag = None
+        self.jelly_init()  # эффект «Желе» (встроенный мод, jelly.py)
         self.dark = None
         self.lum = None        # яркость фона под прошлым стеклом
         self.theme_mem = {}    # яркость фона (шагами по 0.05) -> какая тема была над таким фоном
@@ -618,7 +638,8 @@ class DesktopWidget(QWidget):
         self.move(self.cfg.get("x", 0), self.cfg.get("y", 0))
 
         # свет под курсором
-        self.hover = QTimer(self, interval=33, timeout=self.update)
+        self.hover = QTimer(self, interval=33, timeout=self.hover_tick)
+        self._hover_at = None  # где курсор был при прошлом кадре света
         # обои сменились — перерисовать стекло
         self.wall_timer = QTimer(self, interval=5000, timeout=self.check_wallpaper)
         self.wall_timer.start()
@@ -891,6 +912,9 @@ class DesktopWidget(QWidget):
             QWidget.setFixedSize(self, w, h)
 
     def event(self, e):
+        # «Желе»: пока карточка пружинит, кадр — картинка виджета с искажением (jelly.py)
+        if e.type() == QEvent.Paint and self._jelly_xf is not None and self.jelly_paint():
+            return True
         if PROFILE is not None and e.type() == QEvent.Paint and self.key:  # замер: кто сколько раз и как долго рисуется
             t = time.perf_counter()
             result = super().event(e)
@@ -1274,6 +1298,7 @@ class DesktopWidget(QWidget):
         # было два moveEvent — второй перекрывал первый, и подложка Windows не ехала за виджетом
         super().moveEvent(event)
         self._rect_cache = None  # covered() — снова спросить Windows, где окно
+        self.jelly_moved(QPoint(self.x(), self.y()))
         self.follow_backdrop()
         # и при перетаскивании — в фоне: снимок + стекло ~10–15 мс, а мышь шлёт сотни сдвигов в секунду;
         # считать на каждом сдвиге в главном потоке — окно не поспевало за мышью и дёргалось.
@@ -1380,8 +1405,18 @@ class DesktopWidget(QWidget):
             QTimer.singleShot(0, self.showNormal)
         super().changeEvent(event)
 
+    def hover_tick(self):
+        """Свет за курсором: перерисовать, только если курсор сдвинулся (раньше — 30 раз в секунду весь
+        виджет, даже когда мышь просто лежит над ним)."""
+        at = QCursor.pos()
+        if at != self._hover_at:
+            self._hover_at = at
+            self.update()
+
     def enterEvent(self, event):
+        self._hover_at = None
         self.hover.start()
+        self.jelly_kick()
 
     def leaveEvent(self, event):
         self.hover.stop()
@@ -1419,6 +1454,7 @@ class DesktopWidget(QWidget):
             self._swipe = None
             self._decide = not activity.editing and self.swiping()  # куда тянут — решим по первым пикселям
             self._press_at = time.monotonic()
+            self.jelly_press(event.position() / self.scale())
 
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -1473,6 +1509,7 @@ class DesktopWidget(QWidget):
 
     def mouseReleaseEvent(self, event):
         self._decide = False
+        self.jelly_release()
         if getattr(self, "_swipe", None) is not None:
             dx = (event.globalPosition().toPoint() - self._swipe).x()
             self._swipe = None

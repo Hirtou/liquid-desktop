@@ -1,6 +1,6 @@
 ﻿[package]
 name = "liquid_glass"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Liquid Desktop: расчёт стекла (размытие, цвет акрила, преломление у края, свет, оттенок темы) для glass.py"
 license = "MIT"
